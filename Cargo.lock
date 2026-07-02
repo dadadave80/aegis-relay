@@ -3,6 +3,37 @@
 version = 4
 
 [[package]]
+name = "aegis-airspace"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
+name = "aegis-common"
+version = "0.1.0"
+dependencies = [
+ "poseidon-merkle",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "aegis-credentials"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
+name = "aegis-registry"
+version = "0.1.0"
+dependencies = [
+ "aegis-common",
+ "poseidon-merkle",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

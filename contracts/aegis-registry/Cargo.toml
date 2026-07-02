@@ -1,0 +1,15 @@
+[package]
+name = "aegis-registry"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+soroban-sdk = { workspace = true }
+poseidon-merkle = { path = "../poseidon-merkle" }
+aegis-common = { path = "../aegis-common" }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[lib]
+crate-type = ["cdylib", "rlib"]

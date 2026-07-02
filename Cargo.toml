@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["contracts/poseidon-merkle"]
+members = [
+  "contracts/poseidon-merkle",
+  "contracts/aegis-common",
+  "contracts/aegis-registry",
+  "contracts/aegis-credentials",
+  "contracts/aegis-airspace",
+]
 
 [workspace.dependencies]
 soroban-sdk = { version = "26.1.0", features = ["hazmat-crypto"] }
