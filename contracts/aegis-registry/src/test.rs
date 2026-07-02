@@ -140,6 +140,7 @@ fn create_default(
         &Method::Courier,
         &Rail::Transparent,
         &None::<u32>,
+        &None::<Address>,
     )
 }
 
@@ -345,6 +346,7 @@ fn drone_requires_flight() {
         &Method::Drone,
         &Rail::Transparent,
         &Some(1u32),
+        &None::<Address>,
     );
     let carrier = Address::generate(&env);
     let payout = Address::generate(&env);
@@ -416,6 +418,7 @@ fn milestone_dust() {
         &Method::Courier,
         &Rail::Transparent,
         &None::<u32>,
+        &None::<Address>,
     );
 
     let carrier = Address::generate(&env);
@@ -438,6 +441,7 @@ fn milestone_dust() {
         &merchant, &c_s, &token, &amount,
         &vec![&env, 3_333u32, 6_666u32],
         &ESCROW_DEADLINE, &Method::Courier, &Rail::Transparent, &None::<u32>,
+        &None::<Address>,
     );
     assert_eq!(res, Err(Ok(Error::BadMilestones)), "sum 9_999");
 
@@ -446,6 +450,7 @@ fn milestone_dust() {
         &merchant, &c_s, &token, &amount,
         &vec![&env, 3_000u32, 3_000u32, 4_000u32],
         &ESCROW_DEADLINE, &Method::Courier, &Rail::Transparent, &None::<u32>,
+        &None::<Address>,
     );
     assert_eq!(res, Err(Ok(Error::BadMilestones)), "len 3");
 
@@ -454,6 +459,7 @@ fn milestone_dust() {
         &merchant, &c_s, &token, &amount,
         &vec![&env, 0u32, 10_000u32],
         &ESCROW_DEADLINE, &Method::Courier, &Rail::Transparent, &None::<u32>,
+        &None::<Address>,
     );
     assert_eq!(res, Err(Ok(Error::BadMilestones)), "zero milestone");
 }
@@ -473,6 +479,7 @@ fn create_validation() {
     let res = client.try_create_shipment(
         &merchant, &c_s, &token, &0i128, &milestones,
         &2_000_000u64, &Method::Courier, &Rail::Transparent, &None::<u32>,
+        &None::<Address>,
     );
     assert_eq!(res, Err(Ok(Error::AmountInvalid)));
 
@@ -480,6 +487,7 @@ fn create_validation() {
     let res = client.try_create_shipment(
         &merchant, &c_s, &token, &AMOUNT, &milestones,
         &999_999u64, &Method::Courier, &Rail::Transparent, &None::<u32>,
+        &None::<Address>,
     );
     assert_eq!(res, Err(Ok(Error::DeadlineInvalid)));
 
@@ -487,15 +495,18 @@ fn create_validation() {
     let res = client.try_create_shipment(
         &merchant, &c_s, &token, &AMOUNT, &milestones,
         &1_000_000u64, &Method::Courier, &Rail::Transparent, &None::<u32>,
+        &None::<Address>,
     );
     assert_eq!(res, Err(Ok(Error::DeadlineInvalid)));
 
-    // Confidential rail → RailUnsupported (lands later, rung R3).
+    // Confidential rail is now supported (§6.6), but not before set_ct_token
+    // wires the hooked token's address → CtTokenUnset.
     let res = client.try_create_shipment(
         &merchant, &c_s, &token, &AMOUNT, &milestones,
         &2_000_000u64, &Method::Courier, &Rail::Confidential, &None::<u32>,
+        &None::<Address>,
     );
-    assert_eq!(res, Err(Ok(Error::RailUnsupported)));
+    assert_eq!(res, Err(Ok(Error::CtTokenUnset)));
 }
 
 /// I3/I4: a second accept is rejected on state, so carrier/payout are
@@ -567,6 +578,7 @@ fn unauthorized_create() {
         &Method::Courier,
         &Rail::Transparent,
         &None::<u32>,
+        &None::<Address>,
     );
     assert!(res.is_err(), "create without merchant auth must be rejected");
 }
@@ -692,6 +704,7 @@ fn create_and_accept_drone(
         &Method::Drone,
         &Rail::Transparent,
         &Some(FLIGHT_LANE),
+        &None::<Address>,
     );
     assert_eq!(id, 2, "drone shipment must land on pinned id 2");
 
@@ -815,6 +828,7 @@ fn flight_replay_other_shipment() {
         &Method::Drone,
         &Rail::Transparent,
         &Some(FLIGHT_LANE),
+        &None::<Address>,
     );
     assert_eq!(id3, 3);
     let carrier = Address::generate(&env);
@@ -1006,6 +1020,7 @@ fn submit_flight_no_lane() {
         &Method::Drone,
         &Rail::Transparent,
         &None::<u32>,
+        &None::<Address>,
     );
     let carrier = Address::generate(&env);
     let payout = Address::generate(&env);
@@ -1043,6 +1058,7 @@ fn vk_missing() {
         &Method::Drone,
         &Rail::Transparent,
         &Some(FLIGHT_LANE),
+        &None::<Address>,
     );
     let carrier = Address::generate(&env);
     let payout = Address::generate(&env);
@@ -1051,4 +1067,315 @@ fn vk_missing() {
     env.ledger().set_timestamp(SUBMIT_FLIGHT_LEDGER);
     let res = client.try_submit_flight(&id, &synthetic_proof(&env), &FLIGHT_T0, &FLIGHT_TN);
     assert_eq!(res, Err(Ok(Error::VkMissing)));
+}
+
+// ── Confidential rail (§6.6 hook-caged escrow) tests ─────────────────────────
+//
+// The registry side only: state + the `escrow_of`/`release_allowed` views the
+// hooked CT token cross-calls. All fixture-free except the two lifecycle tests
+// that reuse the delivery fixture — the fixture binds shipment_id = 1 and is
+// rail-agnostic (the A1 signals never mention amount or rail), so a
+// confidential shipment created FIRST consumes it unchanged.
+
+/// Create a confidential shipment with the pinned defaults: amount 0
+/// (the registry never learns the real amount), milestones `[10_000]`,
+/// Courier, no lane, escrow account `escrow`.
+fn create_confidential(
+    env: &Env,
+    client: &RegistryContractClient,
+    token: &Address,
+    merchant: &Address,
+    c_s: &U256,
+    escrow: &Address,
+) -> u64 {
+    client.create_shipment(
+        merchant,
+        c_s,
+        token,
+        &0i128,
+        &vec![env, 10_000u32],
+        &ESCROW_DEADLINE,
+        &Method::Courier,
+        &Rail::Confidential,
+        &None::<u32>,
+        &Some(escrow.clone()),
+    )
+}
+
+/// set_ct_token is set-once: the first call pins, the second (any address)
+/// → AlreadySet; without admin auth the setter is rejected outright.
+#[test]
+fn set_ct_token_once() {
+    let env = Env::default();
+    let (client, _token, _merchant) = setup(&env, synthetic_vk(&env));
+    assert_eq!(client.ct_token(), None, "unset before set_ct_token");
+
+    let ct = Address::generate(&env);
+    client.set_ct_token(&ct);
+    assert_eq!(client.ct_token(), Some(ct.clone()));
+
+    // Second set → AlreadySet (immutable mutual pin, §6.6/T25).
+    let res = client.try_set_ct_token(&Address::generate(&env));
+    assert_eq!(res, Err(Ok(Error::AlreadySet)));
+    assert_eq!(client.ct_token(), Some(ct), "pin untouched");
+
+    // Non-admin (no authorization at all) → auth error, token stays unset.
+    let env2 = Env::default();
+    let (client2, _t2, _m2) = setup(&env2, synthetic_vk(&env2));
+    env2.set_auths(&[]);
+    let res = client2.try_set_ct_token(&Address::generate(&env2));
+    assert!(res.is_err(), "set_ct_token without admin auth must be rejected");
+    assert_eq!(client2.ct_token(), None);
+}
+
+/// Confidential create before `set_ct_token` → CtTokenUnset: no escrow may
+/// exist before the registry↔token mutual pin (T25).
+#[test]
+fn ct_create_requires_token_set() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, synthetic_vk(&env));
+
+    let res = client.try_create_shipment(
+        &merchant, &U256::from_u32(&env, 7), &token, &0i128,
+        &vec![&env, 10_000u32], &ESCROW_DEADLINE, &Method::Courier,
+        &Rail::Confidential, &None::<u32>, &Some(Address::generate(&env)),
+    );
+    assert_eq!(res, Err(Ok(Error::CtTokenUnset)));
+}
+
+/// Confidential create with `escrow = None` → EscrowRequired.
+#[test]
+fn ct_create_requires_escrow() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, synthetic_vk(&env));
+    client.set_ct_token(&Address::generate(&env));
+
+    let res = client.try_create_shipment(
+        &merchant, &U256::from_u32(&env, 7), &token, &0i128,
+        &vec![&env, 10_000u32], &ESCROW_DEADLINE, &Method::Courier,
+        &Rail::Confidential, &None::<u32>, &None::<Address>,
+    );
+    assert_eq!(res, Err(Ok(Error::EscrowRequired)));
+}
+
+/// Confidential create with a non-zero amount → AmountInvalid: the registry
+/// NEVER learns the real amount (it lives as a commitment on the CT token).
+#[test]
+fn ct_create_amount_must_be_zero() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, synthetic_vk(&env));
+    client.set_ct_token(&Address::generate(&env));
+
+    let res = client.try_create_shipment(
+        &merchant, &U256::from_u32(&env, 7), &token, &AMOUNT,
+        &vec![&env, 10_000u32], &ESCROW_DEADLINE, &Method::Courier,
+        &Rail::Confidential, &None::<u32>, &Some(Address::generate(&env)),
+    );
+    assert_eq!(res, Err(Ok(Error::AmountInvalid)));
+}
+
+/// Confidential create with two milestones → BadMilestones: no amount ⇒ no
+/// bps math ⇒ single milestone `[10_000]` only (§6.6 v0 constraint).
+#[test]
+fn ct_create_single_milestone_only() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, synthetic_vk(&env));
+    client.set_ct_token(&Address::generate(&env));
+
+    let res = client.try_create_shipment(
+        &merchant, &U256::from_u32(&env, 7), &token, &0i128,
+        &vec![&env, 3_333u32, 6_667u32], &ESCROW_DEADLINE, &Method::Courier,
+        &Rail::Confidential, &None::<u32>, &Some(Address::generate(&env)),
+    );
+    assert_eq!(res, Err(Ok(Error::BadMilestones)));
+}
+
+/// One escrow account per shipment: reusing a mapped E → EscrowInUse;
+/// a fresh E still works.
+#[test]
+fn ct_escrow_reuse_rejected() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, synthetic_vk(&env));
+    client.set_ct_token(&Address::generate(&env));
+    let c_s = U256::from_u32(&env, 7);
+
+    let e = Address::generate(&env);
+    let id = create_confidential(&env, &client, &token, &merchant, &c_s, &e);
+    assert_eq!(id, 1);
+
+    let res = client.try_create_shipment(
+        &merchant, &c_s, &token, &0i128,
+        &vec![&env, 10_000u32], &ESCROW_DEADLINE, &Method::Courier,
+        &Rail::Confidential, &None::<u32>, &Some(e.clone()),
+    );
+    assert_eq!(res, Err(Ok(Error::EscrowInUse)));
+    assert_eq!(client.escrow_of(&e), Some(id), "mapping untouched by the reject");
+
+    let id2 =
+        create_confidential(&env, &client, &token, &merchant, &c_s, &Address::generate(&env));
+    assert_eq!(id2, 2);
+}
+
+/// Transparent create with `escrow = Some(_)` → EscrowUnexpected: the escrow
+/// param belongs to the confidential rail only.
+#[test]
+fn transparent_rejects_escrow_param() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, synthetic_vk(&env));
+    mint(&env, &token, &merchant, AMOUNT);
+
+    let res = client.try_create_shipment(
+        &merchant, &U256::from_u32(&env, 7), &token, &AMOUNT,
+        &vec![&env, 10_000u32], &ESCROW_DEADLINE, &Method::Courier,
+        &Rail::Transparent, &None::<u32>, &Some(Address::generate(&env)),
+    );
+    assert_eq!(res, Err(Ok(Error::EscrowUnexpected)));
+}
+
+/// escrow_of: unmapped → None; after create E → Some(id); other accounts
+/// stay None.
+#[test]
+fn escrow_of_roundtrip() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, synthetic_vk(&env));
+    client.set_ct_token(&Address::generate(&env));
+
+    let e = Address::generate(&env);
+    assert_eq!(client.escrow_of(&e), None, "unmapped account → None");
+
+    let id =
+        create_confidential(&env, &client, &token, &merchant, &U256::from_u32(&env, 7), &e);
+    assert_eq!(client.escrow_of(&e), Some(id), "E → its shipment id");
+    assert_eq!(
+        client.escrow_of(&Address::generate(&env)),
+        None,
+        "other accounts unaffected"
+    );
+}
+
+/// The full hook decision matrix. Unknown id → false (never panics);
+/// Open/InTransit → false for everyone; after a full confidential lifecycle
+/// driven with the delivery fixture (confidential shipment created FIRST so
+/// it lands on the fixture-bound id 1) → true ONLY for (id, payout); after
+/// refund_expired on a second confidential shipment → true ONLY for
+/// (id2, merchant).
+#[test]
+fn release_allowed_matrix() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, test_fixtures::delivery_vk(&env));
+    let fx = test_fixtures::valid_delivery(&env);
+    client.set_ct_token(&Address::generate(&env));
+    let stranger = Address::generate(&env);
+
+    // Unknown id → false, never a panic.
+    assert!(!client.release_allowed(&99u64, &stranger));
+
+    // Confidential shipment FIRST so it gets the fixture-bound id 1.
+    let e1 = Address::generate(&env);
+    let id = create_confidential(&env, &client, &token, &merchant, &fx.c_s, &e1);
+    assert_eq!(id, 1, "fixture binds shipment_id = 1");
+    // Second confidential shipment for the refund leg.
+    let e2 = Address::generate(&env);
+    let id2 =
+        create_confidential(&env, &client, &token, &merchant, &U256::from_u32(&env, 7), &e2);
+    assert_eq!(id2, 2);
+
+    // Open → false for everyone (merchant included).
+    assert!(!client.release_allowed(&id, &merchant));
+    assert!(!client.release_allowed(&id, &stranger));
+
+    // Accept with the fixture's carrier_pk_commit at the pinned ledger ts.
+    let carrier = Address::generate(&env);
+    let payout = Address::generate(&env);
+    client.accept(&id, &carrier, &payout, &fx.carrier_pk_commit);
+
+    // InTransit → still false for everyone (payout included).
+    assert!(!client.release_allowed(&id, &payout));
+    assert!(!client.release_allowed(&id, &merchant));
+
+    // Deliver with the real fixture proof at the pinned ledger time.
+    env.ledger().set_timestamp(DELIVER_LEDGER_TS);
+    client.deliver(&id, &fx.proof, &fx.nullifier, &fx.ts);
+    assert_eq!(client.status(&id).state, State::Delivered);
+
+    // Delivered → true ONLY for (id, payout).
+    assert!(client.release_allowed(&id, &payout));
+    assert!(!client.release_allowed(&id, &merchant));
+    assert!(!client.release_allowed(&id, &carrier));
+    assert!(!client.release_allowed(&id, &stranger));
+    // ...and never leaks across shipments.
+    assert!(!client.release_allowed(&id2, &payout));
+
+    // Expire shipment 2 → true ONLY for (id2, merchant) — the refund address
+    // is the stored merchant (DESIGN's refund_addr simplified).
+    env.ledger().set_timestamp(ESCROW_DEADLINE + 1);
+    client.refund_expired(&id2);
+    assert_eq!(client.status(&id2).state, State::Expired);
+    assert!(client.release_allowed(&id2, &merchant));
+    assert!(!client.release_allowed(&id2, &payout));
+    assert!(!client.release_allowed(&id2, &stranger));
+    // Shipment 1's answer is unchanged by shipment 2's expiry.
+    assert!(client.release_allowed(&id, &payout));
+    assert!(!client.release_allowed(&id, &merchant));
+}
+
+/// Confidential deliver: proof verified and nullifier spent exactly like the
+/// transparent rail, but ZERO token movement — the contract's balance is
+/// unchanged and the payout receives NOTHING from the registry (settlement is
+/// the hook-admitted confidential_transfer(E → payout) in a second tx,
+/// §6.6 verify-then-settle).
+#[test]
+fn ct_deliver_no_transfer() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, test_fixtures::delivery_vk(&env));
+    let fx = test_fixtures::valid_delivery(&env);
+    client.set_ct_token(&Address::generate(&env));
+    // Fund the merchant so any wrongful pull at create/deliver would show up.
+    mint(&env, &token, &merchant, AMOUNT);
+
+    let e = Address::generate(&env);
+    let id = create_confidential(&env, &client, &token, &merchant, &fx.c_s, &e);
+    assert_eq!(id, 1, "fixture binds shipment_id = 1");
+    // No funds entered the registry at create.
+    assert_eq!(balance(&env, &token, &client.address), 0);
+    assert_eq!(balance(&env, &token, &merchant), AMOUNT);
+
+    let carrier = Address::generate(&env);
+    let payout = Address::generate(&env);
+    client.accept(&id, &carrier, &payout, &fx.carrier_pk_commit);
+
+    env.ledger().set_timestamp(DELIVER_LEDGER_TS);
+    client.deliver(&id, &fx.proof, &fx.nullifier, &fx.ts);
+
+    let st = client.status(&id);
+    assert_eq!(st.state, State::Delivered);
+    assert_eq!(st.paid, 0, "paid stays 0 on the confidential rail");
+    assert_eq!(
+        balance(&env, &token, &client.address),
+        0,
+        "contract token balance unchanged"
+    );
+    assert_eq!(
+        balance(&env, &token, &payout),
+        0,
+        "payout received NOTHING from the registry"
+    );
+    assert_eq!(balance(&env, &token, &merchant), AMOUNT, "merchant untouched");
+
+    // The nullifier is spent exactly as on the transparent rail (I5).
+    let spent = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .has(&DataKey::Null(fx.nullifier.clone()))
+    });
+    assert!(spent, "nullifier must be persisted as spent");
 }

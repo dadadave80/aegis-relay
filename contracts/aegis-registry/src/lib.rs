@@ -56,8 +56,11 @@ pub enum Method {
     Drone = 3,
 }
 
-/// Escrow rail (DESIGN.md §6.6). Only `Transparent` is supported in this
-/// build; `Confidential` (rung R3) lands later and is rejected at `create`.
+/// Escrow rail (DESIGN.md §6.6). `Transparent` escrows funds in this
+/// contract. `Confidential` (rung R3) holds them in a hook-caged escrow
+/// account `E` on the hooked OZ confidential token: no funds ever enter the
+/// registry — it stores only state and adjudicates movement via the
+/// `escrow_of` / `release_allowed` views that the token's hooks cross-call.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
@@ -121,6 +124,12 @@ pub enum DataKey {
     Counter,
     Ship(u64),
     Null(U256),
+    /// Confidential-rail escrow account `E` → shipment id (persistent,
+    /// TTL-bumped on write — DESIGN.md §6.6).
+    Escrow(Address),
+    /// Address of the hooked OZ confidential token (instance, set-once via
+    /// `set_ct_token`).
+    CtToken,
 }
 
 #[contracterror]
@@ -142,7 +151,8 @@ pub enum Error {
     DeadlineNotPassed = 7,
     /// Milestones not len 1–2 / contain a zero share / Σ != 10 000 (I7).
     BadMilestones = 8,
-    /// Only the transparent rail is supported in this build.
+    /// Retired: the confidential rail is supported since the §6.6 escrow-map
+    /// build. Kept so the error-code numbering stays stable; never returned.
     RailUnsupported = 9,
     /// `method == Drone` requires a verified flight before `deliver` (I4).
     FlightRequired = 10,
@@ -163,6 +173,19 @@ pub enum Error {
     /// No flight VK was configured at construction — Drone flights cannot be
     /// verified on this deployment (I6).
     VkMissing = 17,
+    /// `set_ct_token` called when the CT token address is already set
+    /// (set-once by construction — §6.6 mutual address pinning).
+    AlreadySet = 18,
+    /// `escrow` must be `None` on the transparent rail.
+    EscrowUnexpected = 19,
+    /// Confidential create attempted before `set_ct_token` wired the hooked
+    /// token's address.
+    CtTokenUnset = 20,
+    /// Confidential create requires `escrow = Some(E)`.
+    EscrowRequired = 21,
+    /// The escrow account is already mapped to a shipment (one `E` per
+    /// shipment, never reused).
+    EscrowInUse = 22,
 }
 
 // ── Events (opaque by design — I10) ───────────────────────────────────────────
@@ -257,16 +280,51 @@ impl RegistryContract {
         inst.extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
-    /// Create a shipment and escrow `amount` of `token` in the contract.
+    /// Wire the hooked OZ confidential token's address (DESIGN.md §6.6).
+    ///
+    /// Set-once by construction: this setter exists (instead of a
+    /// constructor arg) only because registry and token need each other's
+    /// addresses — deploy the registry first, construct the token with the
+    /// registry's address, then `set_ct_token` closes the loop. `AlreadySet`
+    /// makes the pin immutable afterwards, mirroring I6's no-mutation stance.
+    pub fn set_ct_token(env: Env, token: Address) -> Result<(), Error> {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        if env.storage().instance().has(&DataKey::CtToken) {
+            return Err(Error::AlreadySet);
+        }
+        env.storage().instance().set(&DataKey::CtToken, &token);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(())
+    }
+
+    /// The pinned CT token address, if `set_ct_token` has run.
+    pub fn ct_token(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::CtToken)
+    }
+
+    /// Create a shipment. Transparent rail: escrow `amount` of `token` in
+    /// the contract. Confidential rail (DESIGN.md §6.6): NO funds enter the
+    /// registry — a hook-caged escrow account `E` on the CT token holds the
+    /// (hidden) amount, and this call only records `Escrow(E) = id`.
     ///
     /// Steps:
     ///   0. `merchant.require_auth()` — before any state touch.
-    ///   1. Validate: `amount > 0`; `escrow_deadline` in the future;
-    ///      milestones len 1–2, each > 0, Σ == 10 000 exactly (I7);
-    ///      `rail == Transparent` (confidential rail lands later).
+    ///   1. Validate (both rails): `escrow_deadline` in the future;
+    ///      milestones len 1–2, each > 0, Σ == 10 000 exactly (I7).
+    ///      Transparent: `escrow == None`; `amount > 0`.
+    ///      Confidential: CT token wired (`set_ct_token`); `escrow = Some(E)`
+    ///      with `E` not already mapped; `amount == 0` — the registry NEVER
+    ///      learns the real amount (it lives as a commitment on the CT
+    ///      token); milestones exactly `[10 000]` (no bps math without an
+    ///      amount — §6.6 v0 constraint).
     ///   2. Allocate the next sequential id (first shipment is 1) and store
-    ///      the record (state before interaction — I8).
-    ///   3. Pull the escrow in: `token.transfer(merchant → contract)`.
+    ///      the record — plus `Escrow(E) = id` on the confidential rail
+    ///      (state before interaction — I8).
+    ///   3. Transparent only: pull the escrow in,
+    ///      `token.transfer(merchant → contract)`.
     ///   4. Emit opaque `ShipmentCreated { id, method }` (I10).
     pub fn create_shipment(
         env: Env,
@@ -279,13 +337,20 @@ impl RegistryContract {
         method: Method,
         rail: Rail,
         lane_id: Option<u32>,
+        escrow: Option<Address>,
     ) -> Result<u64, Error> {
         // 0. Auth first.
         merchant.require_auth();
 
-        // 1. Validation.
-        if amount <= 0 {
-            return Err(Error::AmountInvalid);
+        // 1. Validation. Transparent-rail checks keep their original order
+        //    so existing behavior is unchanged.
+        if rail == Rail::Transparent {
+            if escrow.is_some() {
+                return Err(Error::EscrowUnexpected);
+            }
+            if amount <= 0 {
+                return Err(Error::AmountInvalid);
+            }
         }
         if escrow_deadline <= env.ledger().timestamp() {
             return Err(Error::DeadlineInvalid);
@@ -304,8 +369,30 @@ impl RegistryContract {
         if sum != BPS_TOTAL {
             return Err(Error::BadMilestones);
         }
-        if rail != Rail::Transparent {
-            return Err(Error::RailUnsupported);
+        if rail == Rail::Confidential {
+            // §6.6: the hooks are only meaningful on a token that pins this
+            // registry — refuse to create escrows before the mutual pin.
+            if !env.storage().instance().has(&DataKey::CtToken) {
+                return Err(Error::CtTokenUnset);
+            }
+            let e = match &escrow {
+                Some(e) => e.clone(),
+                None => return Err(Error::EscrowRequired),
+            };
+            // The registry NEVER learns the real amount: it must be pinned
+            // to 0 so `deliver`/`refund_expired` provably move nothing.
+            if amount != 0 {
+                return Err(Error::AmountInvalid);
+            }
+            // No amount ⇒ no bps math: single milestone [10 000] only
+            // (the Σ == 10 000 check above forces the value for len 1).
+            if milestones.len() != 1 {
+                return Err(Error::BadMilestones);
+            }
+            // One escrow account per shipment, never reused.
+            if env.storage().persistent().has(&DataKey::Escrow(e)) {
+                return Err(Error::EscrowInUse);
+            }
         }
 
         // 2. Allocate id (counter starts at 1) and store the record.
@@ -341,16 +428,31 @@ impl RegistryContract {
         env.storage()
             .persistent()
             .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        // Confidential rail: record the escrow-account → id mapping the CT
+        // token's hooks resolve via `escrow_of` (§6.6). `Some(escrow)` here
+        // implies `rail == Confidential` — Transparent + Some was rejected
+        // above with EscrowUnexpected.
+        if let Some(e) = &escrow {
+            let ekey = DataKey::Escrow(e.clone());
+            env.storage().persistent().set(&ekey, &id);
+            env.storage()
+                .persistent()
+                .extend_ttl(&ekey, TTL_THRESHOLD, TTL_EXTEND_TO);
+        }
         env.storage()
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // 3. Escrow in — after all validation and after the state write.
-        TokenClient::new(&env, &token).transfer(
-            &merchant,
-            &env.current_contract_address(),
-            &amount,
-        );
+        //    Transparent rail ONLY: on the confidential rail no funds enter
+        //    the registry (the caged account E on the CT token holds them).
+        if rail == Rail::Transparent {
+            TokenClient::new(&env, &token).transfer(
+                &merchant,
+                &env.current_contract_address(),
+                &amount,
+            );
+        }
 
         // 4. Opaque event (I10): id + method, nothing else.
         ShipmentCreated { id, method }.publish(&env);
@@ -449,6 +551,12 @@ impl RegistryContract {
     /// Effects before interaction (I8): nullifier marked spent (check-then-set
     /// in this same invocation), state → `Delivered`, `paid = amount`; then
     /// the remaining escrow is transferred to the **stored** payout.
+    ///
+    /// Confidential rail (§6.6): all checks and the proof verification are
+    /// IDENTICAL, but the payout transfer is skipped — `amount == 0` by
+    /// construction so `remaining == 0` and `paid` stays 0. Settlement is
+    /// the hook-admitted `confidential_transfer(E → payout)` in a second tx
+    /// (verify-then-settle). Event unchanged.
     pub fn deliver(
         env: Env,
         id: u64,
@@ -529,6 +637,9 @@ impl RegistryContract {
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
         // Interaction: final milestone gets amount − Σ paid (I7 — no dust).
+        // Confidential rail: amount == 0 ⇒ remaining == 0 ⇒ no transfer here;
+        // the hook-admitted confidential_transfer(E → payout) settles in a
+        // second tx (§6.6 verify-then-settle).
         if remaining > 0 {
             TokenClient::new(&env, &token).transfer(
                 &env.current_contract_address(),
@@ -659,6 +770,11 @@ impl RegistryContract {
     /// Refund the remaining escrow to the merchant after the deadline.
     /// Permissionless (T11): anyone may trigger it; funds only ever flow to
     /// the stored merchant. `Open | InTransit → Expired`.
+    ///
+    /// Confidential rail (§6.6): the state flip is the whole effect —
+    /// `amount == 0` so no transfer happens here. The merchant then settles
+    /// off-registry with `confidential_transfer(E → merchant)`, admitted by
+    /// the hook via `release_allowed(id, merchant)` once state is Expired.
     pub fn refund_expired(env: Env, id: u64) -> Result<(), Error> {
         let key = DataKey::Ship(id);
         let mut s: Shipment = env
@@ -708,5 +824,34 @@ impl RegistryContract {
             .persistent()
             .get(&DataKey::Ship(id))
             .ok_or(Error::NotFound)
+    }
+
+    /// Escrow-account → shipment-id lookup (§6.6). The CT token's hooks
+    /// cross-call this to decide whether `from` is a caged escrow at all;
+    /// `None` means "not an escrow — hooks don't apply".
+    pub fn escrow_of(env: Env, escrow: Address) -> Option<u64> {
+        env.storage().persistent().get(&DataKey::Escrow(escrow))
+    }
+
+    /// Hook decision view (§6.6): may shipment `id`'s escrowed funds move to
+    /// `to`? True iff `Delivered ⇒ to == stored payout` or
+    /// `Expired ⇒ to == merchant`. The refund address is the merchant —
+    /// DESIGN's `refund_addr` simplified to the stored merchant.
+    ///
+    /// NEVER panics: an unknown id, a pre-terminal state, or a wrong `to`
+    /// all return `false` — the token's hook turns that into the abort.
+    pub fn release_allowed(env: Env, id: u64, to: Address) -> bool {
+        match env
+            .storage()
+            .persistent()
+            .get::<_, Shipment>(&DataKey::Ship(id))
+        {
+            Some(s) => match s.state {
+                State::Delivered => s.payout == Some(to),
+                State::Expired => s.merchant == to,
+                _ => false,
+            },
+            None => false,
+        }
     }
 }
