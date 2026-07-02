@@ -706,7 +706,6 @@ fn create_and_accept_drone(
 /// on-chain head matches the fixture, submit_flight verifies (flight_ok set),
 /// then deliver releases the full escrow to the stored payout.
 #[test]
-#[ignore = "awaiting flight fixture"]
 fn drone_happy_e2e() {
     let env = Env::default();
     let (client, airspace, token, merchant) = setup_flight(
@@ -759,7 +758,6 @@ fn drone_happy_e2e() {
 /// I4: a Drone shipment with a verified-nothing flight (flight_ok == false) is
 /// undeliverable — deliver returns FlightRequired even with a valid proof.
 #[test]
-#[ignore = "awaiting flight fixture"]
 fn deliver_before_flight() {
     let env = Env::default();
     let (client, airspace, token, merchant) = setup_flight(
@@ -786,7 +784,6 @@ fn deliver_before_flight() {
 /// drone shipment (id 3, same lane) fails BadProof — the storage-derived
 /// signals (id, head) differ.
 #[test]
-#[ignore = "awaiting flight fixture"]
 fn flight_replay_other_shipment() {
     let env = Env::default();
     let (client, airspace, token, merchant) = setup_flight(
@@ -830,7 +827,6 @@ fn flight_replay_other_shipment() {
 /// A second submit_flight after a successful one is rejected on state
 /// (flight_ok already true) → WrongState (no re-submission).
 #[test]
-#[ignore = "awaiting flight fixture"]
 fn flight_resubmission() {
     let env = Env::default();
     let (client, airspace, token, merchant) = setup_flight(
@@ -858,7 +854,6 @@ fn flight_resubmission() {
 /// No corridor is approved here: freshness (step 2) must fire before the
 /// corridor read (step 4), so the check ordering is exercised too.
 #[test]
-#[ignore = "awaiting flight fixture"]
 fn stale_flight() {
     let env = Env::default();
     let (client, _airspace, token, merchant) = setup_flight(
@@ -882,7 +877,6 @@ fn stale_flight() {
 /// → TsBeforeAccept. Again no corridor is approved: this check (step 2) must
 /// precede the corridor read.
 #[test]
-#[ignore = "awaiting flight fixture"]
 fn flight_t0_before_accept() {
     let env = Env::default();
     let (client, _airspace, token, merchant) = setup_flight(
@@ -906,7 +900,6 @@ fn flight_t0_before_accept() {
 /// The stored corridor's window must cover the ledger time: a window that ended
 /// long ago → CorridorExpired (window enforced by the registry, not airspace).
 #[test]
-#[ignore = "awaiting flight fixture"]
 fn corridor_expired() {
     let env = Env::default();
     let (client, airspace, token, merchant) = setup_flight(
@@ -933,7 +926,6 @@ fn corridor_expired() {
 /// feeds THAT stored root into the public inputs, so the proof (which binds the
 /// real corridor root) fails → BadProof. This is I1 working.
 #[test]
-#[ignore = "awaiting flight fixture"]
 fn stale_root_rejected() {
     let env = Env::default();
     let (client, airspace, token, merchant) = setup_flight(
@@ -986,7 +978,6 @@ fn submit_flight_not_drone() {
 /// A Drone shipment created with `lane_id = None` → NoLane (step 3): there is
 /// no corridor to check against.
 #[test]
-#[ignore = "awaiting flight fixture"]
 fn submit_flight_no_lane() {
     let env = Env::default();
     env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
