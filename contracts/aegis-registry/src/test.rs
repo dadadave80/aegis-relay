@@ -20,7 +20,7 @@ use soroban_sdk::{
 };
 
 use crate::{
-    groth16, test_fixtures, DataKey, Error, Method, Rail, RegistryContract,
+    groth16, test_fixtures, test_fixtures_flight, DataKey, Error, Method, Rail, RegistryContract,
     RegistryContractClient, State,
 };
 
@@ -31,6 +31,16 @@ const ESCROW_DEADLINE: u64 = 1_800_086_400;
 const ACCEPT_LEDGER_TS: u64 = 1_799_999_990;
 const POD_TS: u64 = 1_800_000_000;
 const DELIVER_LEDGER_TS: u64 = 1_800_000_060;
+
+// ── Pinned flight-scenario numbers (MUST match test_fixtures_flight) ───────────
+const FLIGHT_LANE: u32 = 7;
+const FLIGHT_T0: u64 = 1_800_000_000;
+const FLIGHT_TN: u64 = 1_800_000_300;
+const SUBMIT_FLIGHT_LEDGER: u64 = 1_800_000_350;
+const DRONE_DELIVER_LEDGER: u64 = 1_800_000_420;
+// Corridor window that comfortably brackets the flight scenario.
+const CORRIDOR_FROM: u64 = 1_799_000_000;
+const CORRIDOR_TO: u64 = 1_801_000_000;
 
 // ── Synthetic VK (TEST ONLY) ─────────────────────────────────────────────────
 // Byte arrays copied from the deleted `contracts/_staging/groth16_verifier.rs`
@@ -603,4 +613,445 @@ fn vk_signal_len_mismatch() {
 
     let s4 = vec![&env, fr(&env, 1), fr(&env, 2), fr(&env, 3), fr(&env, 4)];
     assert!(!groth16::verify(&env, &vk, &proof, s4));
+}
+
+// ── Flight (Drone) tests ──────────────────────────────────────────────────────
+//
+// Pinned scenario (MUST match the parallel `test_fixtures_flight` generator):
+//   throwaway courier shipment id 1, drone shipment id 2 (Drone, lane 7),
+//   accept at ledger 1_799_999_990, t_0 = 1_800_000_000, t_n = 1_800_000_300,
+//   submit_flight at ledger 1_800_000_350, drone deliver at ledger 1_800_000_420.
+//
+// Tests that consume the flight fixture are `#[ignore]` until the generated
+// bytes land (the placeholder bodies `unimplemented!()`); they must still
+// compile. The fixture-free negative tests (`submit_flight_not_drone`,
+// `vk_missing`) run in the default suite.
+
+/// Register a SAC token, a merchant, and a REAL `aegis-airspace` contract, then
+/// the registry wired to that airspace with the given delivery/flight VKs.
+/// Mocks all auths. Returns `(registry, airspace, token, merchant)`.
+fn setup_flight<'a>(
+    env: &'a Env,
+    vk_delivery: groth16::VerificationKey,
+    vk_flight: Option<groth16::VerificationKey>,
+) -> (
+    RegistryContractClient<'a>,
+    aegis_airspace::AirspaceContractClient<'a>,
+    Address,
+    Address,
+) {
+    env.mock_all_auths();
+
+    let token_admin = Address::generate(env);
+    let sac = env.register_stellar_asset_contract_v2(token_admin);
+    let token = sac.address();
+    let merchant = Address::generate(env);
+
+    let admin = Address::generate(env);
+    let credentials = Address::generate(env);
+
+    // The registry reads corridor roots from THIS real airspace (I1/T22).
+    let authority = Address::generate(env);
+    let airspace_id = env.register(aegis_airspace::AirspaceContract, (authority,));
+
+    let registry_id = env.register(
+        RegistryContract,
+        (admin, vk_delivery, vk_flight, credentials, airspace_id.clone()),
+    );
+
+    (
+        RegistryContractClient::new(env, &registry_id),
+        aegis_airspace::AirspaceContractClient::new(env, &airspace_id),
+        token,
+        merchant,
+    )
+}
+
+/// Create a throwaway courier shipment (id 1) so the drone shipment lands on the
+/// pinned id 2 (Drone, lane 7, `c_s`), then accept it with `carrier_pk_commit`
+/// at `accept_ledger`. Returns `(drone_id = 2, payout)`. Caller mints escrow.
+fn create_and_accept_drone(
+    env: &Env,
+    client: &RegistryContractClient,
+    token: &Address,
+    merchant: &Address,
+    c_s: &U256,
+    carrier_pk_commit: &U256,
+    accept_ledger: u64,
+) -> (u64, Address) {
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let _throwaway = create_default(env, client, token, merchant, c_s);
+
+    let id = client.create_shipment(
+        merchant,
+        c_s,
+        token,
+        &AMOUNT,
+        &vec![env, 10_000u32],
+        &ESCROW_DEADLINE,
+        &Method::Drone,
+        &Rail::Transparent,
+        &Some(FLIGHT_LANE),
+    );
+    assert_eq!(id, 2, "drone shipment must land on pinned id 2");
+
+    let carrier = Address::generate(env);
+    let payout = Address::generate(env);
+    env.ledger().set_timestamp(accept_ledger);
+    client.accept(&id, &carrier, &payout, carrier_pk_commit);
+    (id, payout)
+}
+
+/// Full drone lifecycle: authority approves the corridor, create+accept →
+/// on-chain head matches the fixture, submit_flight verifies (flight_ok set),
+/// then deliver releases the full escrow to the stored payout.
+#[test]
+#[ignore = "awaiting flight fixture"]
+fn drone_happy_e2e() {
+    let env = Env::default();
+    let (client, airspace, token, merchant) = setup_flight(
+        &env,
+        test_fixtures::delivery_vk(&env),
+        Some(test_fixtures_flight::flight_vk(&env)),
+    );
+    let fx = test_fixtures_flight::valid_flight(&env);
+    assert_eq!(fx.t_0, FLIGHT_T0, "fixture must bind the pinned t_0");
+    assert_eq!(fx.t_n, FLIGHT_TN, "fixture must bind the pinned t_n");
+    mint(&env, &token, &merchant, 2 * AMOUNT);
+
+    // Authority approves lane 7 with the fixture's corridor root (I1: root
+    // comes from the airspace store, then into the proof's public inputs).
+    airspace.approve_corridor(&FLIGHT_LANE, &fx.corridor_root, &CORRIDOR_FROM, &CORRIDOR_TO);
+
+    let (id, payout) = create_and_accept_drone(
+        &env,
+        &client,
+        &token,
+        &merchant,
+        &fx.c_s,
+        &fx.carrier_pk_commit,
+        ACCEPT_LEDGER_TS,
+    );
+    assert_eq!(id, fx.shipment_id, "fixture binds shipment_id = 2");
+    assert_eq!(
+        client.status(&id).head,
+        Some(fx.head.clone()),
+        "on-chain custody head must match the fixture"
+    );
+
+    // submit_flight verifies the A2 proof against the stored corridor root.
+    env.ledger().set_timestamp(SUBMIT_FLIGHT_LEDGER);
+    client.submit_flight(&id, &fx.proof, &fx.t_0, &fx.t_n);
+    assert!(client.status(&id).flight_ok, "flight_ok set after submit_flight");
+
+    // deliver the drone shipment with the drone-delivery fixture.
+    let dd = test_fixtures_flight::drone_delivery(&env);
+    env.ledger().set_timestamp(DRONE_DELIVER_LEDGER);
+    client.deliver(&id, &dd.proof, &dd.nullifier, &dd.ts);
+
+    let st = client.status(&id);
+    assert_eq!(st.state, State::Delivered);
+    assert_eq!(st.paid, AMOUNT);
+    assert_eq!(balance(&env, &token, &payout), AMOUNT, "payout received all");
+    assert_eq!(balance(&env, &token, &client.address), 0, "escrow drained");
+}
+
+/// I4: a Drone shipment with a verified-nothing flight (flight_ok == false) is
+/// undeliverable — deliver returns FlightRequired even with a valid proof.
+#[test]
+#[ignore = "awaiting flight fixture"]
+fn deliver_before_flight() {
+    let env = Env::default();
+    let (client, airspace, token, merchant) = setup_flight(
+        &env,
+        test_fixtures::delivery_vk(&env),
+        Some(test_fixtures_flight::flight_vk(&env)),
+    );
+    let fx = test_fixtures_flight::valid_flight(&env);
+    mint(&env, &token, &merchant, 2 * AMOUNT);
+    airspace.approve_corridor(&FLIGHT_LANE, &fx.corridor_root, &CORRIDOR_FROM, &CORRIDOR_TO);
+
+    let (id, _payout) = create_and_accept_drone(
+        &env, &client, &token, &merchant, &fx.c_s, &fx.carrier_pk_commit, ACCEPT_LEDGER_TS,
+    );
+
+    // Deliver WITHOUT submit_flight first.
+    let dd = test_fixtures_flight::drone_delivery(&env);
+    env.ledger().set_timestamp(DRONE_DELIVER_LEDGER);
+    let res = client.try_deliver(&id, &dd.proof, &dd.nullifier, &dd.ts);
+    assert_eq!(res, Err(Ok(Error::FlightRequired)));
+}
+
+/// T7/T1: the fixture proof binds shipment 2; replaying it against a different
+/// drone shipment (id 3, same lane) fails BadProof — the storage-derived
+/// signals (id, head) differ.
+#[test]
+#[ignore = "awaiting flight fixture"]
+fn flight_replay_other_shipment() {
+    let env = Env::default();
+    let (client, airspace, token, merchant) = setup_flight(
+        &env,
+        test_fixtures::delivery_vk(&env),
+        Some(test_fixtures_flight::flight_vk(&env)),
+    );
+    let fx = test_fixtures_flight::valid_flight(&env);
+    mint(&env, &token, &merchant, 3 * AMOUNT);
+    airspace.approve_corridor(&FLIGHT_LANE, &fx.corridor_root, &CORRIDOR_FROM, &CORRIDOR_TO);
+
+    // ids 1 (throwaway) + 2 (drone) via the helper, then a third drone shipment.
+    let _drone2 = create_and_accept_drone(
+        &env, &client, &token, &merchant, &fx.c_s, &fx.carrier_pk_commit, ACCEPT_LEDGER_TS,
+    );
+    let id3 = client.create_shipment(
+        &merchant,
+        &fx.c_s,
+        &token,
+        &AMOUNT,
+        &vec![&env, 10_000u32],
+        &ESCROW_DEADLINE,
+        &Method::Drone,
+        &Rail::Transparent,
+        &Some(FLIGHT_LANE),
+    );
+    assert_eq!(id3, 3);
+    let carrier = Address::generate(&env);
+    let payout = Address::generate(&env);
+    client.accept(&id3, &carrier, &payout, &fx.carrier_pk_commit);
+
+    env.ledger().set_timestamp(SUBMIT_FLIGHT_LEDGER);
+    let res = client.try_submit_flight(&id3, &fx.proof, &fx.t_0, &fx.t_n);
+    assert_eq!(
+        res,
+        Err(Ok(Error::BadProof)),
+        "a flight proof bound to shipment 2 must not verify for shipment 3"
+    );
+}
+
+/// A second submit_flight after a successful one is rejected on state
+/// (flight_ok already true) → WrongState (no re-submission).
+#[test]
+#[ignore = "awaiting flight fixture"]
+fn flight_resubmission() {
+    let env = Env::default();
+    let (client, airspace, token, merchant) = setup_flight(
+        &env,
+        test_fixtures::delivery_vk(&env),
+        Some(test_fixtures_flight::flight_vk(&env)),
+    );
+    let fx = test_fixtures_flight::valid_flight(&env);
+    mint(&env, &token, &merchant, 2 * AMOUNT);
+    airspace.approve_corridor(&FLIGHT_LANE, &fx.corridor_root, &CORRIDOR_FROM, &CORRIDOR_TO);
+
+    let (id, _payout) = create_and_accept_drone(
+        &env, &client, &token, &merchant, &fx.c_s, &fx.carrier_pk_commit, ACCEPT_LEDGER_TS,
+    );
+
+    env.ledger().set_timestamp(SUBMIT_FLIGHT_LEDGER);
+    client.submit_flight(&id, &fx.proof, &fx.t_0, &fx.t_n);
+    assert!(client.status(&id).flight_ok);
+
+    let res = client.try_submit_flight(&id, &fx.proof, &fx.t_0, &fx.t_n);
+    assert_eq!(res, Err(Ok(Error::WrongState)), "no flight re-submission");
+}
+
+/// I9: submit_flight far past t_n → StaleTs (|1000 − 300| = 700 > WINDOW 600).
+/// No corridor is approved here: freshness (step 2) must fire before the
+/// corridor read (step 4), so the check ordering is exercised too.
+#[test]
+#[ignore = "awaiting flight fixture"]
+fn stale_flight() {
+    let env = Env::default();
+    let (client, _airspace, token, merchant) = setup_flight(
+        &env,
+        test_fixtures::delivery_vk(&env),
+        Some(test_fixtures_flight::flight_vk(&env)),
+    );
+    let fx = test_fixtures_flight::valid_flight(&env);
+    mint(&env, &token, &merchant, 2 * AMOUNT);
+
+    let (id, _payout) = create_and_accept_drone(
+        &env, &client, &token, &merchant, &fx.c_s, &fx.carrier_pk_commit, ACCEPT_LEDGER_TS,
+    );
+
+    env.ledger().set_timestamp(1_800_001_000);
+    let res = client.try_submit_flight(&id, &fx.proof, &fx.t_0, &fx.t_n);
+    assert_eq!(res, Err(Ok(Error::StaleTs)), "|now - t_n| = 700 > 600");
+}
+
+/// I9: accept later than t_0 (accept_ts = 1_800_000_100 > t_0 = 1_800_000_000)
+/// → TsBeforeAccept. Again no corridor is approved: this check (step 2) must
+/// precede the corridor read.
+#[test]
+#[ignore = "awaiting flight fixture"]
+fn flight_t0_before_accept() {
+    let env = Env::default();
+    let (client, _airspace, token, merchant) = setup_flight(
+        &env,
+        test_fixtures::delivery_vk(&env),
+        Some(test_fixtures_flight::flight_vk(&env)),
+    );
+    let fx = test_fixtures_flight::valid_flight(&env);
+    mint(&env, &token, &merchant, 2 * AMOUNT);
+
+    // Accept AFTER t_0 so t_0 < accept_ts.
+    let (id, _payout) = create_and_accept_drone(
+        &env, &client, &token, &merchant, &fx.c_s, &fx.carrier_pk_commit, 1_800_000_100,
+    );
+
+    env.ledger().set_timestamp(SUBMIT_FLIGHT_LEDGER);
+    let res = client.try_submit_flight(&id, &fx.proof, &fx.t_0, &fx.t_n);
+    assert_eq!(res, Err(Ok(Error::TsBeforeAccept)), "t_0 < accept_ts");
+}
+
+/// The stored corridor's window must cover the ledger time: a window that ended
+/// long ago → CorridorExpired (window enforced by the registry, not airspace).
+#[test]
+#[ignore = "awaiting flight fixture"]
+fn corridor_expired() {
+    let env = Env::default();
+    let (client, airspace, token, merchant) = setup_flight(
+        &env,
+        test_fixtures::delivery_vk(&env),
+        Some(test_fixtures_flight::flight_vk(&env)),
+    );
+    let fx = test_fixtures_flight::valid_flight(&env);
+    mint(&env, &token, &merchant, 2 * AMOUNT);
+
+    // Correct root, but the window ended before the flight.
+    airspace.approve_corridor(&FLIGHT_LANE, &fx.corridor_root, &1_700_000_000u64, &1_750_000_000u64);
+
+    let (id, _payout) = create_and_accept_drone(
+        &env, &client, &token, &merchant, &fx.c_s, &fx.carrier_pk_commit, ACCEPT_LEDGER_TS,
+    );
+
+    env.ledger().set_timestamp(SUBMIT_FLIGHT_LEDGER);
+    let res = client.try_submit_flight(&id, &fx.proof, &fx.t_0, &fx.t_n);
+    assert_eq!(res, Err(Ok(Error::CorridorExpired)));
+}
+
+/// T22/I1: the authority approves a DIFFERENT root for lane 7. The registry
+/// feeds THAT stored root into the public inputs, so the proof (which binds the
+/// real corridor root) fails → BadProof. This is I1 working.
+#[test]
+#[ignore = "awaiting flight fixture"]
+fn stale_root_rejected() {
+    let env = Env::default();
+    let (client, airspace, token, merchant) = setup_flight(
+        &env,
+        test_fixtures::delivery_vk(&env),
+        Some(test_fixtures_flight::flight_vk(&env)),
+    );
+    let fx = test_fixtures_flight::valid_flight(&env);
+    mint(&env, &token, &merchant, 2 * AMOUNT);
+
+    // A stale/wrong root (not the fixture's), valid window.
+    airspace.approve_corridor(&FLIGHT_LANE, &U256::from_u32(&env, 999), &CORRIDOR_FROM, &CORRIDOR_TO);
+
+    let (id, _payout) = create_and_accept_drone(
+        &env, &client, &token, &merchant, &fx.c_s, &fx.carrier_pk_commit, ACCEPT_LEDGER_TS,
+    );
+
+    env.ledger().set_timestamp(SUBMIT_FLIGHT_LEDGER);
+    let res = client.try_submit_flight(&id, &fx.proof, &fx.t_0, &fx.t_n);
+    assert_eq!(
+        res,
+        Err(Ok(Error::BadProof)),
+        "a proof bound to the real root must not verify against a stale stored root"
+    );
+}
+
+/// submit_flight on a Courier shipment → NotDrone (step 1, before any proof or
+/// corridor work). Fixture-free: uses the delivery fixture's proof, which is
+/// never reached.
+#[test]
+fn submit_flight_not_drone() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, _airspace, token, merchant) =
+        setup_flight(&env, synthetic_vk(&env), Some(synthetic_vk(&env)));
+    let fx = test_fixtures::valid_delivery(&env);
+    mint(&env, &token, &merchant, AMOUNT);
+
+    // A Courier shipment, accepted → InTransit.
+    let id = create_default(&env, &client, &token, &merchant, &fx.c_s);
+    let carrier = Address::generate(&env);
+    let payout = Address::generate(&env);
+    client.accept(&id, &carrier, &payout, &fx.carrier_pk_commit);
+
+    env.ledger().set_timestamp(SUBMIT_FLIGHT_LEDGER);
+    let res = client.try_submit_flight(&id, &fx.proof, &FLIGHT_T0, &FLIGHT_TN);
+    assert_eq!(res, Err(Ok(Error::NotDrone)));
+}
+
+/// A Drone shipment created with `lane_id = None` → NoLane (step 3): there is
+/// no corridor to check against.
+#[test]
+#[ignore = "awaiting flight fixture"]
+fn submit_flight_no_lane() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, _airspace, token, merchant) = setup_flight(
+        &env,
+        test_fixtures::delivery_vk(&env),
+        Some(test_fixtures_flight::flight_vk(&env)),
+    );
+    let fx = test_fixtures_flight::valid_flight(&env);
+    mint(&env, &token, &merchant, AMOUNT);
+
+    // Drone shipment with NO lane.
+    let id = client.create_shipment(
+        &merchant,
+        &fx.c_s,
+        &token,
+        &AMOUNT,
+        &vec![&env, 10_000u32],
+        &ESCROW_DEADLINE,
+        &Method::Drone,
+        &Rail::Transparent,
+        &None::<u32>,
+    );
+    let carrier = Address::generate(&env);
+    let payout = Address::generate(&env);
+    client.accept(&id, &carrier, &payout, &fx.carrier_pk_commit);
+
+    env.ledger().set_timestamp(SUBMIT_FLIGHT_LEDGER);
+    let res = client.try_submit_flight(&id, &fx.proof, &fx.t_0, &fx.t_n);
+    assert_eq!(res, Err(Ok(Error::NoLane)));
+}
+
+/// A deployment constructed without a flight VK (None) cannot verify flights:
+/// submit_flight reaches the VK check (step 5) and returns VkMissing. The
+/// corridor IS approved so steps 1–4 pass; a synthetic proof suffices because
+/// verification is never reached. Fixture-free.
+#[test]
+fn vk_missing() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    // No flight VK.
+    let (client, airspace, token, merchant) = setup_flight(&env, synthetic_vk(&env), None);
+    mint(&env, &token, &merchant, AMOUNT);
+
+    // Corridor approved so the corridor read (step 4) passes and we reach the
+    // VK check (step 5). Root is arbitrary — verification is never reached.
+    airspace.approve_corridor(&FLIGHT_LANE, &U256::from_u32(&env, 42), &CORRIDOR_FROM, &CORRIDOR_TO);
+
+    let c_s = U256::from_u32(&env, 7);
+    let id = client.create_shipment(
+        &merchant,
+        &c_s,
+        &token,
+        &AMOUNT,
+        &vec![&env, 10_000u32],
+        &ESCROW_DEADLINE,
+        &Method::Drone,
+        &Rail::Transparent,
+        &Some(FLIGHT_LANE),
+    );
+    let carrier = Address::generate(&env);
+    let payout = Address::generate(&env);
+    client.accept(&id, &carrier, &payout, &U256::from_u32(&env, 11));
+
+    env.ledger().set_timestamp(SUBMIT_FLIGHT_LEDGER);
+    let res = client.try_submit_flight(&id, &synthetic_proof(&env), &FLIGHT_T0, &FLIGHT_TN);
+    assert_eq!(res, Err(Ok(Error::VkMissing)));
 }

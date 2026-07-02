@@ -10,6 +10,7 @@ aegis-common = { path = "../aegis-common" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+aegis-airspace = { path = "../aegis-airspace" }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

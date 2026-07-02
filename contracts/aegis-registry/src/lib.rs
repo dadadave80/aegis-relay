@@ -25,6 +25,8 @@ pub mod groth16;
 mod test;
 #[cfg(test)]
 mod test_fixtures;
+#[cfg(test)]
+mod test_fixtures_flight;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype,
@@ -150,6 +152,17 @@ pub enum Error {
     AmountInvalid = 12,
     /// `escrow_deadline` not in the future.
     DeadlineInvalid = 13,
+    /// `submit_flight` called on a shipment whose `method != Drone` (I4).
+    NotDrone = 14,
+    /// `submit_flight` on a Drone shipment with no `lane_id` — no corridor to
+    /// check against.
+    NoLane = 15,
+    /// The stored corridor's validity window does not cover the current ledger
+    /// time (I1/T22 — window enforced by the registry, not the airspace store).
+    CorridorExpired = 16,
+    /// No flight VK was configured at construction — Drone flights cannot be
+    /// verified on this deployment (I6).
+    VkMissing = 17,
 }
 
 // ── Events (opaque by design — I10) ───────────────────────────────────────────
@@ -182,6 +195,36 @@ pub struct ShipmentDelivered {
 pub struct ShipmentExpired {
     #[topic]
     pub id: u64,
+}
+
+/// Emitted when a Drone shipment's flight proof verifies (I10 — id only).
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FlightVerified {
+    #[topic]
+    pub id: u64,
+}
+
+// ── Airspace cross-contract client ─────────────────────────────────────────────
+// Corridor roots/windows are read from the companion `aegis-airspace` contract's
+// storage, never from tx args (I1/T22). `CorridorInfo` mirrors the airspace
+// contract's type field-for-field so the returned value decodes cleanly.
+mod airspace_client {
+    use soroban_sdk::{contractclient, contracttype, Env, U256};
+
+    #[contracttype]
+    #[derive(Clone)]
+    pub struct CorridorInfo {
+        pub root: U256,
+        pub valid_from: u64,
+        pub valid_to: u64,
+    }
+
+    #[contractclient(name = "AirspaceClient")]
+    #[allow(dead_code)] // only the generated `AirspaceClient` is called directly
+    pub trait AirspaceInterface {
+        fn corridor(env: Env, lane_id: u32) -> CorridorInfo;
+    }
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -495,6 +538,120 @@ impl RegistryContract {
         }
 
         ShipmentDelivered { id, nullifier }.publish(&env);
+
+        Ok(())
+    }
+
+    /// Verify a drone flight (circuit A2) and set `flight_ok`, the gate that
+    /// unlocks `deliver` for `method == Drone` (I4).
+    ///
+    /// Permissionless like `deliver` (I3 reasoning): a flight proof moves no
+    /// funds, so the submitter is irrelevant — a front-runner merely donates
+    /// the fee (T3).
+    ///
+    /// Checks, in order:
+    ///   1. State == `InTransit` (I4); `method == Drone`; `flight_ok == false`
+    ///      (no re-submission — a second flight is a WrongState no-op).
+    ///   2. Freshness (I9): `|ledger_time − t_n| ≤ WINDOW_SEC`,
+    ///      `t_0 ≥ accept_ts`, `t_0 ≤ t_n`.
+    ///   3. A `lane_id` must be set — it names the corridor to check against.
+    ///   4. Corridor root + window come from the **airspace contract's**
+    ///      storage (I1/T22), never from the caller: a cross-contract
+    ///      `corridor(lane)` read, then `valid_from ≤ now ≤ valid_to`.
+    ///   5. The flight VK must have been configured at construction (I6).
+    ///   6. Groth16 verify with public signals built **from storage** (I1),
+    ///      in circuit A2 order:
+    ///      `[shipment_id, C_S, head, corridor_root, t_0, t_n]` — only `t_0`/`t_n`
+    ///      are caller-supplied, and the proof binds them.
+    ///   7. Effect (I8 — state write, no interaction): `flight_ok = true`,
+    ///      TTL bumps, opaque `FlightVerified { id }` (I10).
+    pub fn submit_flight(
+        env: Env,
+        id: u64,
+        proof: groth16::Proof,
+        t_0: u64,
+        t_n: u64,
+    ) -> Result<(), Error> {
+        let key = DataKey::Ship(id);
+        let mut s: Shipment = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::NotFound)?;
+
+        // 1. Legal predecessor state + Drone gating (I4).
+        if s.state != State::InTransit {
+            return Err(Error::WrongState);
+        }
+        if s.method != Method::Drone {
+            return Err(Error::NotDrone);
+        }
+        if s.flight_ok {
+            // Already verified — no re-submission.
+            return Err(Error::WrongState);
+        }
+
+        // 2. Freshness window, on-chain (I9). Circuits cannot see the clock.
+        let now = env.ledger().timestamp();
+        let drift = if now >= t_n { now - t_n } else { t_n - now };
+        if drift > aegis_common::WINDOW_SEC {
+            return Err(Error::StaleTs);
+        }
+        if t_0 < s.accept_ts {
+            return Err(Error::TsBeforeAccept);
+        }
+        if t_0 > t_n {
+            return Err(Error::StaleTs);
+        }
+
+        // 3. A lane is required to know which corridor to check.
+        let lane = s.lane_id.ok_or(Error::NoLane)?;
+
+        // 4. Corridor root/window from the AIRSPACE contract's storage (I1/T22).
+        //    Never trust a caller-supplied root — that is a forged universe.
+        let airspace_addr: Address =
+            env.storage().instance().get(&DataKey::Airspace).unwrap();
+        let corridor =
+            airspace_client::AirspaceClient::new(&env, &airspace_addr).corridor(&lane);
+        if now < corridor.valid_from || now > corridor.valid_to {
+            return Err(Error::CorridorExpired);
+        }
+
+        // 5. Flight VK must be configured (I6 — set once, never mutated).
+        let vk: groth16::VerificationKey = env
+            .storage()
+            .instance()
+            .get::<_, Option<groth16::VerificationKey>>(&DataKey::VkFlight)
+            .unwrap()
+            .ok_or(Error::VkMissing)?;
+
+        // 6. Public signals from STORAGE (I1), in circuit A2 order:
+        //    [shipment_id, C_S, head, corridor_root, t_0, t_n].
+        let head = s.head.clone().ok_or(Error::WrongState)?;
+        let signals: Vec<Bn254Fr> = vec![
+            &env,
+            Bn254Fr::from(aegis_common::fr_u64(&env, id)),
+            Bn254Fr::from(s.c_s.clone()),
+            Bn254Fr::from(head),
+            Bn254Fr::from(corridor.root.clone()),
+            Bn254Fr::from(aegis_common::fr_u64(&env, t_0)),
+            Bn254Fr::from(aegis_common::fr_u64(&env, t_n)),
+        ];
+        if !groth16::verify(&env, &vk, &proof, signals) {
+            return Err(Error::BadProof);
+        }
+
+        // 7. Effect (I8): flight verified. No token movement here.
+        s.flight_ok = true;
+        env.storage().persistent().set(&key, &s);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        FlightVerified { id }.publish(&env);
 
         Ok(())
     }
