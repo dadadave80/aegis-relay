@@ -210,6 +210,8 @@ async function cmdCreate(flags: Record<string, string>): Promise<void> {
   const built = await buildShipment({
     toLat: flags['to-lat'],
     toLon: flags['to-lon'],
+    fromLat: flags['from-lat'],
+    fromLon: flags['from-lon'],
     amount: flags.amount,
     deadlineHours: Number(flags['deadline-hours']),
     method,
