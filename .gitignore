@@ -6,6 +6,7 @@ prover/node_modules/
 prover/out/
 dashboard/node_modules/
 dashboard/.next/
+dashboard/.demo-state/
 *.zkey
 *.ptau
 *.wtns

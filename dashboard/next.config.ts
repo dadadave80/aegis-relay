@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname, ".."),
   },
+  // The stateless server routes reuse the prover's crypto (Poseidon/EdDSA via
+  // circomlibjs) and snarkjs for Groth16 proving. Both are heavy native/ESM
+  // packages that must be required by Node at runtime, not bundled.
+  serverExternalPackages: ["snarkjs", "circomlibjs"],
 };
 
 export default nextConfig;
