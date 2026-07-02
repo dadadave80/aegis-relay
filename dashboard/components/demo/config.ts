@@ -1,16 +1,15 @@
 /**
  * Client-side fallbacks + link helpers for the demo console.
  *
- * When the backend session provisions, real contract ids + explorer bases come
- * from SessionInfo.contracts. Until then (or if provisioning fails in guest
- * mode) we fall back to the known testnet deployment so the board still renders
- * live explorer links. These mirror the defaults in lib/contract.ts; we don't
- * import that module to keep the heavy Stellar SDK out of the client bundle.
+ * The connected wallet acts on a fixed testnet deployment. Contract ids +
+ * explorer bases live here (mirroring WalletInfo.contracts / lib/contract.ts)
+ * so the board renders live explorer links without pulling the heavy Stellar
+ * SDK into the client bundle.
  */
 
-import type { Role, SessionInfo } from "@/lib/types";
+import type { Role, WalletInfo } from "@/lib/types";
 
-export type Contracts = SessionInfo["contracts"];
+export type Contracts = WalletInfo["contracts"];
 
 export const FALLBACK_CONTRACTS: Contracts = {
   registry: "CC4HXXHUE6ZCIVVN4XAHPV4JMYHEWK7ZIKILQMG5WCJ4V67NWLFTVGCA",

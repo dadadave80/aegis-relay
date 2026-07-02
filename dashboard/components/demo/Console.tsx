@@ -1,12 +1,14 @@
 "use client";
 
 /**
- * Console orchestrator. Gates on auth (login screen ↔ console), shows the
- * friendbot funding state on first entry, then lays out the top bar, role
- * switcher, per-role action panel and the persistent lifecycle board.
+ * Console orchestrator. Gates on auth (login screen ↔ console) and, in Privy
+ * mode, on the embedded Stellar wallet being provisioned. Once connected it
+ * lays out the top bar, role switcher, per-role action panel and the persistent
+ * lifecycle board. The connected wallet signs every on-chain action — no relayer.
  */
 
 import { useAuth } from "@/app/providers";
+import { useWallet } from "@/lib/wallet-context";
 import { useSession } from "@/lib/session-context";
 import LoginScreen from "./LoginScreen";
 import TopBar from "./TopBar";
@@ -15,7 +17,7 @@ import LifecycleBoard from "./LifecycleBoard";
 import ActionPanel from "./RolePanels";
 import { Spinner } from "./primitives";
 
-function FundingScreen() {
+function ProvisioningScreen() {
   return (
     <div className="max-w-md mx-auto px-6 py-24 text-center">
       <div
@@ -29,36 +31,21 @@ function FundingScreen() {
         <Spinner size={22} />
       </div>
       <h1 className="text-xl font-semibold tracking-tight">
-        Funding testnet accounts…
+        Provisioning your Stellar wallet…
       </h1>
       <p className="text-sm mt-2 leading-relaxed" style={{ color: "var(--text-dim)" }}>
-        Minting per-session merchant and carrier keypairs and topping them up via
-        friendbot. This takes a few seconds — no wallet, no extension, no popups.
+        Creating a non-custodial embedded wallet and topping it up via friendbot.
+        You hold the keys — every on-chain action is signed by this wallet, never
+        a server. This takes a few seconds.
       </p>
     </div>
   );
 }
 
-function SessionErrorBanner({ detail }: { detail: string }) {
-  return (
-    <div
-      className="card p-4 text-sm"
-      style={{ borderColor: "color-mix(in srgb, var(--amber) 40%, transparent)" }}
-    >
-      <span className="font-semibold" style={{ color: "var(--amber)" }}>
-        Testnet accounts unavailable.
-      </span>{" "}
-      <span style={{ color: "var(--text-dim)" }}>
-        {detail} — the console still works; live balances and on-chain actions
-        will retry once the backend is reachable.
-      </span>
-    </div>
-  );
-}
-
 export default function Console() {
-  const { ready, authenticated } = useAuth();
-  const { role, sessionStatus, session, sessionError } = useSession();
+  const { ready, authenticated, mode } = useAuth();
+  const { stellarAddress } = useWallet();
+  const { role } = useSession();
 
   if (!ready) {
     return (
@@ -70,19 +57,15 @@ export default function Console() {
 
   if (!authenticated) return <LoginScreen />;
 
-  const firstProvision =
-    !session && (sessionStatus === "idle" || sessionStatus === "funding");
-  if (firstProvision) return <FundingScreen />;
+  // In Privy mode the Stellar wallet is provisioned right after login; wait for
+  // it before showing the console. Guest mode has no wallet — browse read-only.
+  if (mode === "privy" && !stellarAddress) return <ProvisioningScreen />;
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">
       <div className="demo-fade-up" style={{ animationDelay: "0ms" }}>
         <TopBar />
       </div>
-
-      {sessionStatus === "error" && sessionError && (
-        <SessionErrorBanner detail={sessionError} />
-      )}
 
       <div className="demo-fade-up" style={{ animationDelay: "60ms" }}>
         <RoleSwitcher />

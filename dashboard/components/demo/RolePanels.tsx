@@ -1,10 +1,15 @@
 "use client";
 
 /**
- * Per-role action panels. Each CLI script in the demo becomes a button here;
- * every async action shows a spinner + step label, disables while running, and
- * renders failures inline (never crashes). After each mutation we re-read the
- * shipment so the lifecycle board stays live.
+ * Per-role action panels. Each CLI script in the demo becomes a button here.
+ *
+ * On-chain, value-moving actions (Merchant create; Carrier accept / submit
+ * flight / deliver) are signed by the CONNECTED PRIVY STELLAR WALLET via
+ * useWalletFlows() — build on the stateless server, sign in the wallet, submit.
+ * Stateless server work (verify / fly / prove-delivery / recipient PoD / audit /
+ * attack) stays on api.*. After each wallet-flow we re-read the shipment so the
+ * lifecycle board stays live. Every async action shows a spinner + step label,
+ * disables while running, and renders failures inline (never crashes).
  */
 
 import { useState, type ReactNode } from "react";
@@ -13,7 +18,7 @@ import type {
   AttackKind,
   AttackRes,
   AuditRes,
-  CreateReq,
+  CreateParams,
   Method,
   Rail,
   Role,
@@ -22,6 +27,8 @@ import type {
   VerifyRes,
 } from "@/lib/types";
 import { useSession } from "@/lib/session-context";
+import { useWallet } from "@/lib/wallet-context";
+import { useWalletFlows } from "@/lib/wallet-flows";
 import { useToast } from "./toast";
 import {
   ActionButton,
@@ -99,6 +106,19 @@ function NeedShipment() {
   );
 }
 
+/** Shown when an on-chain action needs a connected wallet but there is none. */
+function NeedWallet() {
+  return (
+    <div
+      className="text-sm rounded-lg p-4"
+      style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-dim)" }}
+    >
+      Connect a wallet to sign on-chain actions — log in with a Privy wallet from
+      the top bar. You can still browse the board as a guest.
+    </div>
+  );
+}
+
 function Result({ tone = "mint", children }: { tone?: "mint" | "amber"; children: ReactNode }) {
   const color = tone === "amber" ? "var(--amber)" : "var(--mint)";
   return (
@@ -118,12 +138,13 @@ function Result({ tone = "mint", children }: { tone?: "mint" | "amber"; children
 
 function MerchantPanel() {
   const {
-    sessionId,
     setCurrentShipmentId,
     setCreatedDest,
     applyView,
     refreshShipment,
   } = useSession();
+  const { stellarAddress } = useWallet();
+  const flows = useWalletFlows();
   const { toast } = useToast();
   const { runningKey, error, setError, run } = useRunner();
 
@@ -136,6 +157,8 @@ function MerchantPanel() {
   const [rail, setRail] = useState<Rail>("transparent");
   const [deadline, setDeadline] = useState("24");
 
+  const walletReady = !!stellarAddress;
+
   const create = () =>
     run("create", async () => {
       const amt = Number(amount);
@@ -143,8 +166,7 @@ function MerchantPanel() {
         setError({ title: "Invalid amount", detail: "Enter a positive XLM amount." });
         return;
       }
-      const body: CreateReq = {
-        sessionId,
+      const params: CreateParams = {
         toLat: Number(toLat),
         toLon: Number(toLon),
         amount: amt,
@@ -155,19 +177,21 @@ function MerchantPanel() {
           ? { fromLat: Number(fromLat), fromLon: Number(fromLon) }
           : {}),
       };
-      const res = await api.create(body);
-      if (res.ok && res.data) {
+      const res = await flows.create(params);
+      if (res.ok && res.data && res.data.shipmentId != null) {
         const { shipmentId, view } = res.data;
         setCurrentShipmentId(shipmentId);
         setCreatedDest(shipmentId, { lat: Number(toLat), lon: Number(toLon) });
-        applyView(view);
+        if (view) applyView(view);
         toast({
           title: `Shipment #${shipmentId} created`,
-          detail: (
+          detail: view ? (
             <>
               commitment <span className="mono">{shortHash(view.cs)}</span> —
-              opaque on-chain
+              opaque on-chain, signed by your wallet
             </>
+          ) : (
+            "opaque commitment stored — signed by your wallet"
           ),
         });
         void refreshShipment();
@@ -179,7 +203,7 @@ function MerchantPanel() {
   return (
     <Panel
       title="Merchant — create a shipment"
-      subtitle="Escrow payment against a single Poseidon commitment. The chain stores an opaque field element — on the confidential rail, not even the amount."
+      subtitle="Escrow payment against a single Poseidon commitment. Your wallet signs the create — the chain stores an opaque field element, and on the confidential rail, not even the amount."
     >
       <div className="grid sm:grid-cols-2 gap-4">
         <Field label="Destination lat" hint="the recipient region — hidden in C_S">
@@ -239,12 +263,14 @@ function MerchantPanel() {
         </div>
       </div>
 
+      {!walletReady && <NeedWallet />}
       {error && <InlineError title={error.title} detail={error.detail} />}
 
       <ActionButton
         onClick={create}
+        disabled={!walletReady}
         loading={runningKey === "create"}
-        loadingLabel="Building commitment & submitting…"
+        loadingLabel="Building commitment & signing…"
         className="w-full sm:w-auto"
       >
         Create shipment
@@ -317,20 +343,21 @@ function CarrierStep({
 
 function CarrierPanel() {
   const {
-    sessionId,
     currentShipmentId,
     shipment,
-    session,
     applyView,
     refreshShipment,
     setFlyResult,
     flyResult,
   } = useSession();
+  const { stellarAddress } = useWallet();
+  const flows = useWalletFlows();
   const { toast } = useToast();
   const { runningKey, error, setError, run } = useRunner();
   const [verifyRes, setVerifyRes] = useState<VerifyRes | null>(null);
   const [proofReady, setProofReady] = useState(false);
-  const contracts = session?.contracts ?? FALLBACK_CONTRACTS;
+  const contracts = FALLBACK_CONTRACTS;
+  const walletReady = !!stellarAddress;
 
   if (currentShipmentId === null || !shipment) {
     return (
@@ -343,7 +370,7 @@ function CarrierPanel() {
     );
   }
 
-  const req: ShipmentReq = { sessionId, shipmentId: currentShipmentId };
+  const req: ShipmentReq = { shipmentId: currentShipmentId };
   const isDrone = shipment.method === "drone";
   const accepted =
     shipment.head !== null ||
@@ -367,10 +394,10 @@ function CarrierPanel() {
 
   const accept = () =>
     run("accept", async () => {
-      const res = await api.accept(req);
+      const res = await flows.accept(currentShipmentId);
       if (res.ok && res.data) {
-        afterMutation(res.data);
-        toast({ title: "Custody accepted", detail: "custody head computed on-chain" });
+        afterMutation(res.data.view);
+        toast({ title: "Custody accepted", detail: "custody head computed on-chain — your wallet signed" });
       } else setError({ title: "Accept failed", detail: res.error ?? "Unknown error" });
     });
 
@@ -388,9 +415,9 @@ function CarrierPanel() {
 
   const submitFlight = () =>
     run("submitFlight", async () => {
-      const res = await api.submitFlight(req);
+      const res = await flows.submitFlight(currentShipmentId);
       if (res.ok && res.data) {
-        afterMutation(res.data);
+        afterMutation(res.data.view);
         toast({ title: "Flight verified on-chain", detail: "flight_ok = true" });
       } else setError({ title: "Submit flight failed", detail: res.error ?? "Unknown error" });
     });
@@ -408,15 +435,16 @@ function CarrierPanel() {
 
   const deliver = () =>
     run("deliver", async () => {
-      const res = await api.deliver(req);
+      const res = await flows.deliver(currentShipmentId);
       if (res.ok && res.data) {
-        afterMutation(res.data);
+        afterMutation(res.data.view);
         setProofReady(false);
+        const settleTx = res.data.view?.deliverTx ?? res.data.tx;
         toast({
           title: "Delivered — escrow released",
-          detail: res.data.deliverTx ? (
+          detail: settleTx ? (
             <a
-              href={txLink(contracts, res.data.deliverTx)}
+              href={txLink(contracts, settleTx)}
               target="_blank"
               rel="noopener noreferrer"
               className="mono hover:underline"
@@ -434,8 +462,9 @@ function CarrierPanel() {
   return (
     <Panel
       title="Carrier — take custody & prove compliance"
-      subtitle="Buttons unlock in lifecycle order. Each proof verifies and settles on-chain in a single Soroban transaction."
+      subtitle="Buttons unlock in lifecycle order. Your wallet signs custody moves; each proof verifies and settles on-chain in a single Soroban transaction."
     >
+      {!walletReady && <NeedWallet />}
       {error && <InlineError title={error.title} detail={error.detail} />}
 
       <div className="space-y-3">
@@ -470,7 +499,7 @@ function CarrierPanel() {
         >
           <ActionButton
             onClick={accept}
-            disabled={!open}
+            disabled={!open || !walletReady}
             loading={runningKey === "accept"}
             loadingLabel="Signing accept…"
           >
@@ -519,9 +548,9 @@ function CarrierPanel() {
             >
               <ActionButton
                 onClick={submitFlight}
-                disabled={!flyResult || shipment.flightOk}
+                disabled={!flyResult || shipment.flightOk || !walletReady}
                 loading={runningKey === "submitFlight"}
-                loadingLabel="Submitting flight proof…"
+                loadingLabel="Signing & submitting flight proof…"
               >
                 Submit flight proof
               </ActionButton>
@@ -554,9 +583,9 @@ function CarrierPanel() {
         >
           <ActionButton
             onClick={deliver}
-            disabled={!proofReady || delivered}
+            disabled={!proofReady || delivered || !walletReady}
             loading={runningKey === "deliver"}
-            loadingLabel="Verifying & settling…"
+            loadingLabel="Signing, verifying & settling…"
           >
             Deliver
           </ActionButton>
@@ -569,7 +598,7 @@ function CarrierPanel() {
 // ── Recipient ────────────────────────────────────────────────────────────────
 
 function RecipientPanel() {
-  const { sessionId, currentShipmentId, shipment, createdDest } = useSession();
+  const { currentShipmentId, shipment, createdDest } = useSession();
   const { toast } = useToast();
   const { runningKey, error, setError, run } = useRunner();
   const [signed, setSigned] = useState(false);
@@ -590,7 +619,6 @@ function RecipientPanel() {
   const sign = () =>
     run("sign", async () => {
       const res = await api.signPod({
-        sessionId,
         shipmentId: currentShipmentId,
         lat: Number(lat),
         lon: Number(lon),
@@ -604,7 +632,7 @@ function RecipientPanel() {
   return (
     <Panel
       title="Recipient — sign proof of delivery"
-      subtitle="Your device signs one Poseidon message with your claim key. The chain never sees the signature, the key, or the location — only a proof it all checks out."
+      subtitle="The recipient's device signs one Poseidon message with the claim key issued by the merchant. The chain never sees the signature, the key, or the location — only a proof it all checks out."
     >
       <div className="grid sm:grid-cols-2 gap-4">
         <Field label="Signing lat" hint="must fall inside the committed destination region">
@@ -635,9 +663,10 @@ function RecipientPanel() {
       )}
 
       <Honesty>
-        In production this signing flow lives in the recipient&apos;s wallet PWA
-        behind the claim link. The demo signs server-side — same key, same message,
-        same proof.
+        The PoD is a Baby Jubjub (circuit) signature, not a Stellar tx — the
+        recipient never transacts on-chain. In production this signing lives in
+        the recipient&apos;s wallet PWA behind the claim link; the demo signs it
+        on the stateless server with the same claim key, message and proof.
       </Honesty>
     </Panel>
   );
@@ -646,7 +675,7 @@ function RecipientPanel() {
 // ── Auditor ──────────────────────────────────────────────────────────────────
 
 function AuditorPanel() {
-  const { sessionId, currentShipmentId, shipment } = useSession();
+  const { currentShipmentId, shipment } = useSession();
   const { runningKey, error, setError, run } = useRunner();
   const [audit, setAudit] = useState<AuditRes | null>(null);
 
@@ -663,7 +692,7 @@ function AuditorPanel() {
 
   const decrypt = () =>
     run("audit", async () => {
-      const res = await api.audit({ sessionId, shipmentId: currentShipmentId });
+      const res = await api.audit({ shipmentId: currentShipmentId });
       if (res.ok && res.data) setAudit(res.data);
       else setError({ title: "Decrypt failed", detail: res.error ?? "Unknown error" });
     });
@@ -723,7 +752,7 @@ const ATTACKS: { kind: AttackKind; label: string; desc: string }[] = [
 ];
 
 function AttackerPanel() {
-  const { sessionId, currentShipmentId, shipment } = useSession();
+  const { currentShipmentId, shipment } = useSession();
   const { runningKey, error, setError, run } = useRunner();
   const [result, setResult] = useState<{ kind: AttackKind; res: AttackRes; code?: string } | null>(
     null,
@@ -743,7 +772,7 @@ function AttackerPanel() {
   const attack = (kind: AttackKind) =>
     run(kind, async () => {
       setResult(null);
-      const res = await api.attack({ sessionId, shipmentId: currentShipmentId, kind });
+      const res = await api.attack({ shipmentId: currentShipmentId, kind });
       if (res.data) setResult({ kind, res: res.data, code: res.errorCode });
       else
         setError({

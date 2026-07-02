@@ -77,9 +77,9 @@ function FocusInput() {
 }
 
 export default function LifecycleBoard() {
-  const { shipment, currentShipmentId, shipmentLoading, session, flyResult } =
+  const { shipment, currentShipmentId, shipmentLoading, flyResult } =
     useSession();
-  const contracts = session?.contracts ?? FALLBACK_CONTRACTS;
+  const contracts = FALLBACK_CONTRACTS;
 
   return (
     <section className="space-y-4">

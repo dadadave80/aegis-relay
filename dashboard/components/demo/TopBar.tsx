@@ -1,19 +1,16 @@
 "use client";
 
 /**
- * Console top bar: who you're logged in as, the live friendbot-funded role
- * balances (merchant / carrier), the deployed contract links, and a logout.
+ * Console top bar: who you're logged in as, the connected non-custodial Stellar
+ * wallet (address + live XLM balance + friendbot funding state), the deployed
+ * contract links, and a logout.
  */
 
 import { useState } from "react";
 import Hash from "@/components/Hash";
 import { useAuth } from "@/app/providers";
-import { useSession } from "@/lib/session-context";
-import {
-  FALLBACK_CONTRACTS,
-  accountLink,
-  contractLink,
-} from "./config";
+import { useWallet } from "@/lib/wallet-context";
+import { FALLBACK_CONTRACTS, accountLink, contractLink } from "./config";
 import { Spinner } from "./primitives";
 
 function Identity() {
@@ -39,13 +36,11 @@ function Identity() {
   );
 }
 
-function BalanceChip({
-  label,
+function WalletChip({
   address,
   balanceXlm,
   funded,
 }: {
-  label: string;
   address: string | null;
   balanceXlm: string | null;
   funded: boolean;
@@ -60,7 +55,7 @@ function BalanceChip({
           className="text-[10px] uppercase tracking-wider"
           style={{ color: "var(--text-faint)" }}
         >
-          {label}
+          Your wallet
         </p>
         <p
           className="mono text-sm font-semibold tabular-nums"
@@ -73,7 +68,7 @@ function BalanceChip({
         <Hash value={address} href={accountLink(address)} />
       ) : (
         <span className="text-xs" style={{ color: "var(--text-faint)" }}>
-          not funded
+          not connected
         </span>
       )}
     </div>
@@ -82,13 +77,13 @@ function BalanceChip({
 
 export default function TopBar() {
   const { logout, mode } = useAuth();
-  const { session, sessionStatus, refreshSession } = useSession();
+  const { stellarAddress, balanceXlm, funded, refreshBalance } = useWallet();
   const [refreshing, setRefreshing] = useState(false);
-  const contracts = session?.contracts ?? FALLBACK_CONTRACTS;
+  const contracts = FALLBACK_CONTRACTS;
 
   const doRefresh = async () => {
     setRefreshing(true);
-    await refreshSession();
+    await refreshBalance();
     setRefreshing(false);
   };
 
@@ -105,22 +100,15 @@ export default function TopBar() {
         <Identity />
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <BalanceChip
-            label="Merchant"
-            address={session?.merchant.address ?? null}
-            balanceXlm={session?.merchant.balanceXlm ?? null}
-            funded={session?.merchant.funded ?? false}
-          />
-          <BalanceChip
-            label="Carrier"
-            address={session?.carrier.address ?? null}
-            balanceXlm={session?.carrier.balanceXlm ?? null}
-            funded={session?.carrier.funded ?? false}
+          <WalletChip
+            address={stellarAddress}
+            balanceXlm={balanceXlm}
+            funded={funded}
           />
           <button
             onClick={doRefresh}
-            disabled={refreshing || sessionStatus === "funding"}
-            aria-label="Refresh balances"
+            disabled={refreshing || !stellarAddress}
+            aria-label="Refresh balance"
             className="rounded-lg min-h-[40px] px-3 text-sm border hairline transition-[transform,opacity] active:scale-[0.96] enabled:hover:text-white disabled:opacity-45"
             style={{ color: "var(--text-faint)" }}
           >

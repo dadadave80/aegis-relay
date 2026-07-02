@@ -21,9 +21,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
+import { useCreateWallet } from "@privy-io/react-auth/extended-chains";
 
 export const MINT = "#4EF0B5";
 const APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
@@ -62,6 +64,34 @@ export function useAuth(): AuthState {
 
 // ── Privy mode ───────────────────────────────────────────────────────────────
 
+/**
+ * Ensures the connected user has an embedded **Stellar** wallet — the console's
+ * signing identity. Privy provisions Stellar via the extended-chains stack
+ * (`useCreateWallet({chainType:"stellar"})`), not the `embeddedWallets` config,
+ * so we create it once on first login if the user has none. Guarded against
+ * double-create; the resulting wallet appears in `user.linkedAccounts`.
+ */
+function StellarWalletProvisioner() {
+  const { ready, authenticated, user } = usePrivy();
+  const { createWallet } = useCreateWallet();
+  const creating = useRef(false);
+
+  useEffect(() => {
+    if (!ready || !authenticated || !user) return;
+    const hasStellar = user.linkedAccounts?.some(
+      (a) => a.type === "wallet" && a.chainType === "stellar",
+    );
+    if (hasStellar || creating.current) return;
+    creating.current = true;
+    createWallet({ chainType: "stellar" }).catch(() => {
+      // allow a later retry (e.g. next login) if provisioning failed
+      creating.current = false;
+    });
+  }, [ready, authenticated, user, createWallet]);
+
+  return null;
+}
+
 function PrivyAuthBridge({ children }: { children: React.ReactNode }) {
   const { ready, authenticated, user, login, logout } = usePrivy();
 
@@ -87,7 +117,12 @@ function PrivyAuthBridge({ children }: { children: React.ReactNode }) {
     [ready, authenticated, user, login, logout],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      <StellarWalletProvisioner />
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 // ── Guest mode ───────────────────────────────────────────────────────────────
@@ -168,10 +203,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
         config={{
           loginMethods: ["email", "wallet", "google"],
           appearance: { theme: "dark", accentColor: MINT },
-          embeddedWallets: {
-            ethereum: { createOnLogin: "users-without-wallets" },
-            solana: { createOnLogin: "users-without-wallets" },
-          },
+          // The signing wallet is a Stellar embedded wallet, provisioned via the
+          // extended-chains hook in <StellarWalletProvisioner/>, not here.
         }}
       >
         <PrivyAuthBridge>{children}</PrivyAuthBridge>

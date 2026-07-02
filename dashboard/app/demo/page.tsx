@@ -1,5 +1,6 @@
 "use client";
 
+import { WalletProvider } from "@/lib/wallet-context";
 import { SessionProvider } from "@/lib/session-context";
 import { ToastProvider } from "@/components/demo/toast";
 import Console from "@/components/demo/Console";
@@ -16,11 +17,13 @@ const CONSOLE_CSS = `
 
 export default function DemoPage() {
   return (
-    <SessionProvider>
-      <ToastProvider>
-        <style dangerouslySetInnerHTML={{ __html: CONSOLE_CSS }} />
-        <Console />
-      </ToastProvider>
-    </SessionProvider>
+    <WalletProvider>
+      <SessionProvider>
+        <ToastProvider>
+          <style dangerouslySetInnerHTML={{ __html: CONSOLE_CSS }} />
+          <Console />
+        </ToastProvider>
+      </SessionProvider>
+    </WalletProvider>
   );
 }

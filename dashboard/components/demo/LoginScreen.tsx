@@ -100,8 +100,8 @@ export default function LoginScreen() {
         <p className="text-xs text-center" style={{ color: "var(--text-faint)" }}>
           {isGuest
             ? "No account needed — a local demo session is minted for you."
-            : "Email, wallet or Google — Privy handles identity only."}{" "}
-          Testnet role accounts auto-fund via friendbot on entry (a few seconds).
+            : "Email, wallet or Google — Privy provisions a non-custodial Stellar wallet that signs every action."}{" "}
+          It auto-funds via friendbot on connect (a few seconds).
         </p>
       </div>
     </div>
