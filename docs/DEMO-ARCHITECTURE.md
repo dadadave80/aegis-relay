@@ -1,16 +1,18 @@
 # Interactive app architecture — pinned contract (wallet-signing / non-custodial)
 
-A real dApp, not a relayer console: **connect a Privy wallet → pick a role →
+A real dApp, not a relayer console: **connect a Stellar wallet → pick a role →
 your wallet authorizes that role's on-chain actions.** No server-held Stellar
 keys.
 
 ## Decisions (final — do not relitigate)
 
-- **Privy embedded Stellar wallet signs every Stellar transaction.** Privy
-  supports Stellar at Tier 2 (`@privy-io/react-auth/extended-chains`):
-  `useCreateWallet({chainType:"stellar"})` provisions it, `useSignRawHash({address,
-  chainType:"stellar", hash})` signs a 32-byte hash → `{signature}`. That is the
-  only client-side crypto we need.
+- **Stellar Wallets Kit signs every Stellar transaction.**
+  `@creit.tech/stellar-wallets-kit` v2 (static API): `StellarWalletsKit.init({
+  network, modules})` with the Freighter/Albedo/xBull/Lobstr/Hana/Rabet modules,
+  `authModal() → {address}` to connect, `signTransaction(xdr, {networkPassphrase,
+  address}) → {signedTxXdr}` to sign the full prepared transaction. Browser-only —
+  import it lazily (never at module top) to keep SSR clean. (Previously Privy;
+  swapped out for the native Stellar wallet standard.)
 - **Soroban `require_auth` is satisfied by the transaction SOURCE-ACCOUNT
   signature.** So for `create_shipment(merchant,…)` we set the connected wallet
   as BOTH the `merchant` arg AND the tx source; the wallet's envelope signature
@@ -22,13 +24,12 @@ keys.
   NO keys):**
   1. `POST /api/tx/build` → server builds the invoke with the connected pubkey as
      source, `rpc.Server.prepareTransaction` (simulate + assemble), caches the
-     prepared tx by `buildId`, returns `{buildId, hashHex}` (hashHex = `tx.hash()`).
-  2. Client: `signRawHash({address, chainType:"stellar", hash:"0x"+hashHex})` → sig.
-  3. `POST /api/tx/submit {buildId, signatureHex, pubkey}` → server loads the
-     cached tx, attaches a `DecoratedSignature` (hint = last 4 bytes of the
-     StrKey-decoded pubkey, signature = the 64 raw bytes), `sendTransaction`, polls
-     `getTransaction`, returns `{tx, shipmentId?, view?}`. The server cannot forge
-     — the signature is the wallet's.
+     prepared tx by `buildId`, returns `{buildId, xdr}` (the prepared unsigned XDR).
+  2. Client: `signTransaction(xdr, {networkPassphrase, address})` → `{signedTxXdr}`.
+  3. `POST /api/tx/submit {buildId, signedXdr}` → server checks the signed tx hash
+     equals the built tx (so a client can't swap a different tx), `sendTransaction`,
+     polls `getTransaction`, returns `{tx, shipmentId?, view?}`. The server cannot
+     forge — the signature is the wallet's.
 - **All Poseidon / circom / proving / packet crypto runs SERVER-SIDE** (stateless,
   no custody): the server reuses `../prover/src/lib/*` + the flow logic. Proving
   isn't custody; the only custody op is the Stellar signature, which the wallet does.

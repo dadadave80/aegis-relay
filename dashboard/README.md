@@ -1,12 +1,13 @@
 # Aegis Relay — dApp console
 
-A real wallet-signed dApp: connect a Privy wallet, pick a role
-(Merchant · Carrier · Recipient · Auditor · Attacker), and drive the full
-shipment lifecycle from the browser. **Every action is a button; your connected
-wallet signs every on-chain transaction** (non-custodial — the server holds no
-Stellar keys, it only builds txs and hands your wallet the hash to sign). Also
-serves the informational pages: shipment tracking (`/track/[id]`), the lane-7
-corridor privacy demo (`/map`), and the recipient PoD explainer (`/verify`).
+A real wallet-signed dApp: connect a Stellar wallet (Freighter · Albedo · xBull ·
+Lobstr · Hana · Rabet via Stellar Wallets Kit), pick a role (Merchant · Carrier ·
+Recipient · Auditor · Attacker), and drive the full shipment lifecycle from the
+browser. **Every action is a button; your connected wallet signs every on-chain
+transaction** (non-custodial — the server holds no Stellar keys, it only builds
+txs and hands your wallet the XDR to sign). Also serves the informational pages:
+shipment tracking (`/track/[id]`), the lane-7 corridor privacy demo (`/map`), and
+the recipient PoD explainer (`/verify`).
 
 ## Run it
 
@@ -19,15 +20,13 @@ bun run dev            # http://localhost:3000  → open /demo
 ### Required env (`dashboard/.env.local`)
 
 ```
-NEXT_PUBLIC_PRIVY_APP_ID=<your Privy app id>     # dashboard.privy.io
-PRIVY_APP_SECRET=<your Privy app secret>
 STELLAR_TESTNET_RPC_URL=<a Soroban testnet RPC>  # e.g. Alchemy; falls back to public RPC
 ```
 
-- **Privy allowed origins:** in the Privy dashboard, add your demo origin
-  (`http://localhost:3000`) to the app's allowed domains, or login will fail.
-- Without `NEXT_PUBLIC_PRIVY_APP_ID` the app runs in **guest mode** (browse
-  read-only; on-chain actions need a wallet).
+- **Install a Stellar wallet:** the demo connects via Stellar Wallets Kit — have
+  a testnet-enabled wallet extension ready (Freighter is the easiest). The
+  "Connect wallet" button opens a picker; your wallet signs each transaction.
+  No app-side auth keys needed.
 - **Proving artifacts** must be present on the machine running the server:
   `circuits/build/{delivery_final.zkey,delivery_js/delivery.wasm,
   flight_final.zkey,flight_js/flight.wasm}` (gitignored; produced by
@@ -39,12 +38,13 @@ STELLAR_TESTNET_RPC_URL=<a Soroban testnet RPC>  # e.g. Alchemy; falls back to p
 
 ## How it works
 
-- **Login → Stellar wallet:** Privy provisions an embedded Stellar wallet
-  (`extended-chains`). On connect the wallet is auto-funded via friendbot.
+- **Connect → Stellar wallet:** Stellar Wallets Kit connects Freighter / Albedo /
+  xBull / Lobstr / Hana / Rabet. On connect the address is auto-funded via
+  friendbot.
 - **On-chain actions (create, accept, submit_flight, deliver):** the server
   builds + simulates the Soroban invoke with your wallet as source and returns
-  the tx hash; your wallet signs it (`signRawHash`); the server attaches the
-  signature and submits. Soroban's source-account auth means your signature
+  the prepared XDR; your wallet signs the full transaction (`signTransaction`);
+  the server submits it. Soroban's source-account auth means your signature
   satisfies `require_auth` — no relayer, no custody.
 - **Proving / Poseidon / packet / PoD:** run server-side (stateless, not
   custody). The recipient's proof-of-delivery is a Baby Jubjub circuit signature
