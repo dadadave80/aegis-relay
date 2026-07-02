@@ -15,4 +15,23 @@ files that get committed. Fresh keys per role (privacy posture, DESIGN §13).
 Native XLM SAC (escrow token, transparent rail):
 `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`
 
-Contract IDs are recorded here as they are deployed in P6.
+## Deployed contracts (2026-07-02, first deployment)
+
+| Contract | ID |
+|---|---|
+| aegis-registry (VKs for A1+A2 baked at construction) | `CA5LRPUBK6HHK265QY53JVY565G5NDTODSNK2FZ5B3L5EUFARZFONIOD` |
+| aegis-airspace (lane 7 corridor approved, fixture root) | `CA3XH77GYLTW3LTHISV56SXN4KWEQSMBTTSMIOXP3Q2CK56OFA3SRMUP` |
+| aegis-credentials (epoch 1 root published) | `CDZ4WBLWDDCSSMW4IMKTXKF6DVV24B6NR4TKVD5MLMT3OYJA3KLCBMWF` |
+
+## Live lifecycle proof (shipment #1)
+
+Full COURIER lifecycle executed on testnet 2026-07-02 via the operator CLIs:
+`create` (25 XLM escrowed against opaque `C_S`) → `accept` (custody head
+computed on-chain) → recipient PoD signature → **real Groth16 proof verified
+by the on-chain BN254 pairing check** → escrow released to the stored payout
+in the same transaction. Final state DELIVERED, `paid = 250000000` stroops.
+Explorer: https://stellar.expert/explorer/testnet/contract/CA5LRPUBK6HHK265QY53JVY565G5NDTODSNK2FZ5B3L5EUFARZFONIOD
+
+Note: a second (final) deployment happens once the confidential-escrow rail
+lands (registry interface gains the escrow map); these IDs then move to a
+"first deployment" archive section.
