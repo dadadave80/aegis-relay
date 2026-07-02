@@ -1,0 +1,15 @@
+/target
+**/*.rs.bk
+circuits/build/
+circuits/node_modules/
+prover/node_modules/
+prover/out/
+dashboard/node_modules/
+dashboard/.next/
+*.zkey
+*.ptau
+*.wtns
+.env
+.env.*
+# Soroban test snapshots — regenerated on `cargo test`
+**/test_snapshots/

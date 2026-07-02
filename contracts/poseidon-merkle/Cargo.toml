@@ -1,0 +1,15 @@
+[package]
+name = "poseidon-merkle"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "no_std Soroban primitives: circomlib-compatible BN254 Poseidon hash and a binary Poseidon Merkle tree (root/path/verify)."
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[lib]
+crate-type = ["rlib"]

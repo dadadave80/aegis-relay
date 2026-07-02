@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["contracts/poseidon-merkle"]
+
+[workspace.dependencies]
+soroban-sdk = { version = "26.1.0", features = ["hazmat-crypto"] }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+codegen-units = 1
+lto = true
+panic = "abort"
