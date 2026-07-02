@@ -7,7 +7,6 @@
 //!   escrow_deadline = 1_800_086_400, amount = 1_000_000_000 (100 XLM in
 //!   stroops), milestones = [10_000], method = Courier.
 //!
-//! Tests needing the real proof are `#[ignore = "awaiting delivery fixture"]`
 //! until `test_fixtures.rs` is regenerated with real bytes; they must compile
 //! regardless.
 
@@ -144,7 +143,6 @@ fn fr(env: &Env, v: u32) -> Bn254Fr {
 /// Asserts state transitions, escrow movement (contract drained, payout
 /// += amount), on-chain head == fixture head, and the spent nullifier.
 #[test]
-#[ignore = "awaiting delivery fixture"]
 fn happy_courier_delivery() {
     let env = Env::default();
     env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
@@ -198,7 +196,6 @@ fn happy_courier_delivery() {
 /// T3: `deliver` needs no auth; a stranger's submission still pays the payout
 /// address STORED at accept — front-running is a fee donation, not theft.
 #[test]
-#[ignore = "awaiting delivery fixture"]
 fn frontrun_deliver() {
     let env = Env::default();
     env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
@@ -228,7 +225,6 @@ fn frontrun_deliver() {
 /// shipment 2 (same params, same carrier_pk_commit) must fail BadProof —
 /// the storage-derived signals (id, head) differ.
 #[test]
-#[ignore = "awaiting delivery fixture"]
 fn replay_cross_shipment() {
     let env = Env::default();
     env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
@@ -257,7 +253,6 @@ fn replay_cross_shipment() {
 /// I4: deliver before accept → WrongState; deliver again after Delivered →
 /// WrongState (state check fires before the nullifier check).
 #[test]
-#[ignore = "awaiting delivery fixture"]
 fn deliver_wrong_state() {
     let env = Env::default();
     env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
@@ -284,7 +279,6 @@ fn deliver_wrong_state() {
 
 /// I9: ledger far ahead of ts → StaleTs; ts ≤ accept_ts → TsBeforeAccept.
 #[test]
-#[ignore = "awaiting delivery fixture"]
 fn stale_ts() {
     // Scenario A: window exceeded (700 s > WINDOW_SEC = 600).
     let env = Env::default();
@@ -324,7 +318,6 @@ fn stale_ts() {
 /// I4: method = Drone with flight_ok == false (no submit_flight in this
 /// build) must be undeliverable: FlightRequired.
 #[test]
-#[ignore = "awaiting delivery fixture"]
 fn drone_requires_flight() {
     let env = Env::default();
     env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
