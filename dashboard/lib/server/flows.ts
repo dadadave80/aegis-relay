@@ -497,10 +497,19 @@ export async function attackFlow(id: number, kind: AttackKind): Promise<AttackRe
 }
 
 async function attackDeliverProof(id: number, mode: "tamper" | "wrongproof"): Promise<AttackRes> {
-  const rec = store.getShip(id);
-  if (!rec?.deliveryProof) throw new Error(`shipment ${id} has no delivery proof to attack (run /api/prove-delivery)`);
-  const pub = rec.deliveryProof.publicSignals; // [id, c_s, head, nullifier, ts]
-  const p = rec.deliveryProof.proof;
+  let rec = store.getShip(id);
+  if (!rec) throw new Error(`no stored shipment ${id}`);
+  // Self-prepare: if the shipment has no delivery proof yet, generate a genuine
+  // one (sign PoD at the committed dest, then prove) so the attack is
+  // demonstrable regardless of demo ordering. Requires the shipment be accepted.
+  if (!rec.deliveryProof) {
+    if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted yet — accept it first`);
+    await signPodFlow(id, rec.meta.toLat, rec.meta.toLon);
+    await proveDeliveryFlow(id);
+    rec = store.getShip(id)!;
+  }
+  const pub = rec.deliveryProof!.publicSignals; // [id, c_s, head, nullifier, ts]
+  const p = rec.deliveryProof!.proof;
 
   let proofScVal;
   if (mode === "tamper") {
