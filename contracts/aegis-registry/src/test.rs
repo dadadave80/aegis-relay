@@ -21,7 +21,7 @@ use soroban_sdk::{
 
 use crate::{
     groth16, test_fixtures, test_fixtures_flight, DataKey, Error, Method, Rail, RegistryContract,
-    RegistryContractClient, State,
+    RegistryContractClient, Role, State,
 };
 
 // ── Pinned scenario numbers ───────────────────────────────────────────────────
@@ -1378,4 +1378,73 @@ fn ct_deliver_no_transfer() {
             .has(&DataKey::Null(fx.nullifier.clone()))
     });
     assert!(spent, "nullifier must be persisted as spent");
+}
+
+// ── On-chain role binding (plan 001) ──────────────────────────────────────────
+
+#[test]
+fn role_exclusivity_merchant_cannot_accept() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, test_fixtures::delivery_vk(&env));
+    mint(&env, &token, &merchant, AMOUNT);
+    // merchant creates → bound Merchant with an active service.
+    let id = create_default(&env, &client, &token, &merchant, &U256::from_u32(&env, 7));
+    // The SAME wallet tries to accept (a Carrier action) → WrongRole.
+    let res = client.try_accept(&id, &merchant, &merchant, &U256::from_u32(&env, 9));
+    assert_eq!(res, Err(Ok(Error::WrongRole)), "active merchant cannot accept");
+    assert_eq!(client.role_of(&merchant), Some(Role::Merchant));
+    assert_eq!(client.active_count(&merchant), 1);
+}
+
+#[test]
+fn role_switch_allowed_when_idle() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, test_fixtures::delivery_vk(&env));
+    let fx = test_fixtures::valid_delivery(&env);
+    mint(&env, &token, &merchant, AMOUNT);
+    // Full lifecycle as merchant so the wallet ends idle (active back to 0).
+    let id = create_default(&env, &client, &token, &merchant, &fx.c_s);
+    let payout = Address::generate(&env);
+    let carrier = Address::generate(&env);
+    client.accept(&id, &carrier, &payout, &fx.carrier_pk_commit);
+    env.ledger().set_timestamp(DELIVER_LEDGER_TS);
+    client.deliver(&id, &fx.proof, &fx.nullifier, &fx.ts);
+    assert_eq!(client.active_count(&merchant), 0, "merchant idle after delivery");
+    // Now idle → the merchant wallet may switch to Carrier via set_role.
+    client.set_role(&merchant, &Role::Carrier);
+    assert_eq!(client.role_of(&merchant), Some(Role::Carrier));
+}
+
+#[test]
+fn set_role_locked_while_active() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, test_fixtures::delivery_vk(&env));
+    mint(&env, &token, &merchant, AMOUNT);
+    let _ = create_default(&env, &client, &token, &merchant, &U256::from_u32(&env, 5));
+    // Active merchant cannot switch to Carrier.
+    let res = client.try_set_role(&merchant, &Role::Carrier);
+    assert_eq!(res, Err(Ok(Error::RoleLocked)), "cannot switch while active");
+}
+
+#[test]
+fn active_count_tracks_lifecycle() {
+    let env = Env::default();
+    env.ledger().set_timestamp(ACCEPT_LEDGER_TS);
+    let (client, token, merchant) = setup(&env, test_fixtures::delivery_vk(&env));
+    let fx = test_fixtures::valid_delivery(&env);
+    mint(&env, &token, &merchant, AMOUNT);
+    let carrier = Address::generate(&env);
+    let payout = Address::generate(&env);
+    let id = create_default(&env, &client, &token, &merchant, &fx.c_s);
+    assert_eq!(client.active_count(&merchant), 1);
+    client.accept(&id, &carrier, &payout, &fx.carrier_pk_commit);
+    assert_eq!(client.active_count(&carrier), 1);
+    assert_eq!(client.role_of(&carrier), Some(Role::Carrier));
+    env.ledger().set_timestamp(DELIVER_LEDGER_TS);
+    client.deliver(&id, &fx.proof, &fx.nullifier, &fx.ts);
+    assert_eq!(client.active_count(&merchant), 0, "merchant freed");
+    assert_eq!(client.active_count(&carrier), 0, "carrier freed");
 }

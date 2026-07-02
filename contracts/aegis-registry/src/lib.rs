@@ -69,6 +69,17 @@ pub enum Rail {
     Confidential = 1,
 }
 
+/// On-chain-transacting roles (DESIGN.md §3). Only these two act on the
+/// registry: merchant via `create_shipment`, carrier via `accept`. Recipient
+/// and auditor never transact here, so they are not bound on-chain.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum Role {
+    Merchant = 0,
+    Carrier = 1,
+}
+
 /// Lifecycle state (DESIGN.md §7). Transitions are the only mutators and
 /// every entrypoint asserts its legal predecessor state(s) (I4).
 #[contracttype]
@@ -130,6 +141,11 @@ pub enum DataKey {
     /// Address of the hooked OZ confidential token (instance, set-once via
     /// `set_ct_token`).
     CtToken,
+    /// Wallet → its currently bound role (persistent, TTL-bumped).
+    Role(Address),
+    /// Wallet → count of non-terminal services it is rendering in its bound
+    /// role. Switching roles is only allowed at 0 (persistent, TTL-bumped).
+    Active(Address),
 }
 
 #[contracterror]
@@ -186,6 +202,13 @@ pub enum Error {
     /// The escrow account is already mapped to a shipment (one `E` per
     /// shipment, never reused).
     EscrowInUse = 22,
+    /// The wallet is bound to a different role and still has active services in
+    /// it — it cannot act in this role until those services reach a terminal
+    /// state. (One role per wallet at a time.)
+    WrongRole = 23,
+    /// `set_role` attempted a role switch while the wallet still has active
+    /// services — switch only when idle.
+    RoleLocked = 24,
 }
 
 // ── Events (opaque by design — I10) ───────────────────────────────────────────
@@ -278,6 +301,63 @@ impl RegistryContract {
         inst.set(&DataKey::Airspace, &airspace);
         inst.set(&DataKey::Counter, &0u64);
         inst.extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Read a wallet's active-service count (0 if unset).
+    fn active_of(env: &Env, addr: &Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Active(addr.clone()))
+            .unwrap_or(0)
+    }
+
+    fn set_active(env: &Env, addr: &Address, n: u32) {
+        let key = DataKey::Active(addr.clone());
+        env.storage().persistent().set(&key, &n);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Bind `addr` to `want`, or confirm it is already `want`. If it is bound to
+    /// a DIFFERENT role, allow the switch only when the wallet is idle
+    /// (`active == 0`); otherwise reject with `WrongRole`. Returns Ok on bind.
+    fn bind_role(env: &Env, addr: &Address, want: Role) -> Result<(), Error> {
+        let rkey = DataKey::Role(addr.clone());
+        let current: Option<Role> = env.storage().persistent().get(&rkey);
+        match current {
+            Some(r) if r == want => Ok(()),
+            None => {
+                env.storage().persistent().set(&rkey, &want);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&rkey, TTL_THRESHOLD, TTL_EXTEND_TO);
+                Ok(())
+            }
+            Some(_) => {
+                if Self::active_of(env, addr) == 0 {
+                    env.storage().persistent().set(&rkey, &want);
+                    env.storage()
+                        .persistent()
+                        .extend_ttl(&rkey, TTL_THRESHOLD, TTL_EXTEND_TO);
+                    Ok(())
+                } else {
+                    Err(Error::WrongRole)
+                }
+            }
+        }
+    }
+
+    /// Increment a wallet's active-service count.
+    fn inc_active(env: &Env, addr: &Address) {
+        let n = Self::active_of(env, addr).saturating_add(1);
+        Self::set_active(env, addr, n);
+    }
+
+    /// Decrement a wallet's active-service count (saturating at 0).
+    fn dec_active(env: &Env, addr: &Address) {
+        let n = Self::active_of(env, addr).saturating_sub(1);
+        Self::set_active(env, addr, n);
     }
 
     /// Wire the hooked OZ confidential token's address (DESIGN.md §6.6).
@@ -404,6 +484,11 @@ impl RegistryContract {
             + 1;
         env.storage().instance().set(&DataKey::Counter, &id);
 
+        // Role binding: the creator acts as Merchant. Rejects if the wallet is
+        // an active Carrier (WrongRole); auto-binds/auto-switches when idle.
+        Self::bind_role(&env, &merchant, Role::Merchant)?;
+        Self::inc_active(&env, &merchant);
+
         let shipment = Shipment {
             c_s,
             state: State::Open,
@@ -494,6 +579,11 @@ impl RegistryContract {
         if s.state != State::Open {
             return Err(Error::WrongState);
         }
+
+        // Role binding: the acceptor acts as Carrier. Rejects if the wallet is
+        // an active Merchant (WrongRole); auto-binds/auto-switches when idle.
+        Self::bind_role(&env, &carrier, Role::Carrier)?;
+        Self::inc_active(&env, &carrier);
 
         // 2. Effects: custody fields, write-once (I3).
         s.state = State::InTransit;
@@ -624,6 +714,12 @@ impl RegistryContract {
             .extend_ttl(&null_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         s.state = State::Delivered;
+        // Service complete: free both wallets' active counts so they may switch
+        // roles. carrier is Some here (state was InTransit).
+        Self::dec_active(&env, &s.merchant);
+        if let Some(c) = &s.carrier {
+            Self::dec_active(&env, c);
+        }
         let remaining = s.amount - s.paid;
         s.paid = s.amount;
         let payout = s.payout.clone().ok_or(Error::WrongState)?;
@@ -794,6 +890,11 @@ impl RegistryContract {
 
         // Effects first (I8).
         s.state = State::Expired;
+        // Timeout: free the merchant's count, and the carrier's if one accepted.
+        Self::dec_active(&env, &s.merchant);
+        if let Some(c) = &s.carrier {
+            Self::dec_active(&env, c);
+        }
         let remaining = s.amount - s.paid;
         let merchant = s.merchant.clone();
         let token = s.token.clone();
@@ -853,5 +954,41 @@ impl RegistryContract {
             },
             None => false,
         }
+    }
+
+    /// Explicitly register/switch the caller's role. A switch (changing to a
+    /// different role) is allowed only when the caller has no active services
+    /// (`RoleLocked` otherwise). Setting the role you already hold is a no-op.
+    /// Auto-binding on `create_shipment`/`accept` means calling this is
+    /// optional, but the frontend uses it to record the role at selection time.
+    pub fn set_role(env: Env, caller: Address, role: Role) -> Result<(), Error> {
+        caller.require_auth();
+        let rkey = DataKey::Role(caller.clone());
+        let current: Option<Role> = env.storage().persistent().get(&rkey);
+        if current == Some(role) {
+            return Ok(());
+        }
+        if Self::active_of(&env, &caller) != 0 {
+            return Err(Error::RoleLocked);
+        }
+        env.storage().persistent().set(&rkey, &role);
+        env.storage()
+            .persistent()
+            .extend_ttl(&rkey, TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(())
+    }
+
+    /// The caller's bound role, if any.
+    pub fn role_of(env: Env, addr: Address) -> Option<Role> {
+        env.storage().persistent().get(&DataKey::Role(addr))
+    }
+
+    /// The wallet's active-service count (0 if unset) — the frontend gates role
+    /// switching on this being 0.
+    pub fn active_count(env: Env, addr: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Active(addr))
+            .unwrap_or(0)
     }
 }
