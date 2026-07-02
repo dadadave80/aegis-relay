@@ -752,7 +752,13 @@ fn drone_happy_e2e() {
     assert_eq!(st.state, State::Delivered);
     assert_eq!(st.paid, AMOUNT);
     assert_eq!(balance(&env, &token, &payout), AMOUNT, "payout received all");
-    assert_eq!(balance(&env, &token, &client.address), 0, "escrow drained");
+    // The helper parked a throwaway courier shipment (id 1) to pin the drone
+    // shipment at id 2 — its untouched escrow is all that may remain.
+    assert_eq!(
+        balance(&env, &token, &client.address),
+        AMOUNT,
+        "only the throwaway shipment's escrow remains"
+    );
 }
 
 /// I4: a Drone shipment with a verified-nothing flight (flight_ok == false) is
