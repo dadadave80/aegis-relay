@@ -24,3 +24,30 @@ jobs:
         run: cargo test --workspace --locked
       - name: Build contract wasm (release)
         run: cargo build --workspace --target wasm32v1-none --release --locked
+
+  prover:
+    name: Prover (npm test — encoders, packet, CLI logic)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: prover
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+      - run: npm test
+
+  dashboard:
+    name: Dashboard (bun lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun run lint
+      - run: bun run build
