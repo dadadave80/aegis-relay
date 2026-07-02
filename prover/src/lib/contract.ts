@@ -47,7 +47,7 @@ export interface InvokeCommand {
  * Deterministic ordering — this is what the snapshot tests pin.
  */
 export function buildInvoke(cmd: InvokeCommand): string[] {
-  const network = cmd.network ?? 'testnet';
+  const network = cmd.network ?? process.env.AEGIS_NETWORK ?? 'testnet';
   const argv = [
     'stellar',
     'contract',

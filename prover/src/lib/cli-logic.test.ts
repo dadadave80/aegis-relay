@@ -162,8 +162,9 @@ test('buildInvoke snapshot: create_shipment (courier, no lane)', () => {
     '--amount', '1000000000',
     '--milestones', '[10000]',
     '--escrow_deadline', '1800086400',
-    '--method', 'Courier',
-    '--rail', 'Transparent',
+    // u32-enum spec encoding (Method/Rail carry explicit discriminants)
+    '--method', '1',
+    '--rail', '0',
   ]);
 });
 
@@ -191,8 +192,8 @@ test('buildInvoke snapshot: create_shipment (drone, with lane_id Some)', () => {
     '--amount', '5',
     '--milestones', '[3000,7000]',
     '--escrow_deadline', '1800086400',
-    '--method', 'Drone',
-    '--rail', 'Transparent',
+    '--method', '3',
+    '--rail', '0',
     '--lane_id', '7', // Option Some(7) — present; None would omit this flag
   ]);
 });
