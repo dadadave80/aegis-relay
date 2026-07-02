@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = ["token", "verifier", "auditor"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+# Fork of brozorec/stellar-confidential-token-demo `contracts/` (@ 8b34def).
+# The confidential token, access-control, and proc-macro crates are consumed as
+# git dependencies from the `feat/confidential-verifier-ultrahonk` branch of
+# OpenZeppelin/stellar-contracts (they are NOT published to crates.io). Cargo.lock
+# pins the exact resolved commit; this branch was validated at rev 539968f.
+#
+# Transitive deps (soroban-poseidon, stellar-contract-utils, stellar-governance,
+# and the pinned `ultrahonk-soroban-verifier` git rev) are resolved through that
+# repo's workspace and need not be redeclared here.
+# NOTE: `stellar-tokens` pulls in soroban-sdk's `experimental_spec_shaking_v2`
+# feature transitively, which is why these contracts MUST be compiled with
+# `stellar contract build` (stellar-cli >= 25.2.0), not plain `cargo build`.
+# This workspace stays SEPARATE from the root `contracts/` workspace (soroban-sdk
+# 26.0.x line here vs 26.1.0 there) — never merge them (PIVOT §3.4).
+[workspace.dependencies]
+soroban-sdk = { version = "26.0.0" }
+stellar-access = { git = "https://github.com/OpenZeppelin/stellar-contracts", branch = "feat/confidential-verifier-ultrahonk" }
+stellar-macros = { git = "https://github.com/OpenZeppelin/stellar-contracts", branch = "feat/confidential-verifier-ultrahonk" }
+stellar-tokens = { git = "https://github.com/OpenZeppelin/stellar-contracts", branch = "feat/confidential-verifier-ultrahonk" }
+
+# Soroban release profile: optimize for wasm code size and determinism.
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
