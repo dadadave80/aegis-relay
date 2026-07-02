@@ -159,8 +159,10 @@ export function buildCreateInvoke(args: {
     ['amount', args.amount],
     ['milestones', args.milestones],
     ['escrow_deadline', args.escrowDeadline],
-    ['method', args.method],
-    ['rail', 'Transparent'],
+    // Method/Rail carry explicit integer discriminants, so the contract spec
+    // exposes them as u32 enums — the invoke arg is the number, not the name.
+    ['method', args.method === 'Drone' ? '3' : '1'],
+    ['rail', '0'],
     ['lane_id', args.laneId === undefined ? undefined : String(args.laneId)],
   ];
   return buildInvoke({
