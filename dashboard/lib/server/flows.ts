@@ -194,10 +194,15 @@ async function buildCreate(source: string, p: Partial<CreateParams>): Promise<Bu
         "use the transparent rail (the audit route returns the proven confidential result)",
     );
   }
-  const toLat = p.toLat ?? 37.7749;
-  const toLon = p.toLon ?? -122.4194;
-  const fromLat = p.fromLat ?? toLat;
-  const fromLon = p.fromLon ?? toLon;
+  // Drone shipments fly the regulator-APPROVED corridor (lane 7). Its root is
+  // already published on-chain in the airspace contract, so the flight proof's
+  // corridor_root must match it — which means the endpoints must be the lane's.
+  // (Realistic: a drone can only be dispatched along a pre-approved lane.)
+  const DRONE_LANE = { fromLat: 6.49, fromLon: 3.35, toLat: 6.5244, toLon: 3.3792 };
+  const toLat = method === "drone" ? DRONE_LANE.toLat : (p.toLat ?? 37.7749);
+  const toLon = method === "drone" ? DRONE_LANE.toLon : (p.toLon ?? -122.4194);
+  const fromLat = method === "drone" ? DRONE_LANE.fromLat : (p.fromLat ?? toLat);
+  const fromLon = method === "drone" ? DRONE_LANE.fromLon : (p.fromLon ?? toLon);
   const amountXlm = p.amount ?? 25;
   const amountStroops = BigInt(Math.round(amountXlm * 1e7)).toString();
   const deadlineHours = p.deadlineHours ?? 24;
@@ -397,10 +402,13 @@ export async function flyFlow(id: number): Promise<FlyRes> {
   const rec = store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   if (rec.meta.method !== "drone") throw new Error(`shipment ${id} is not a drone shipment`);
+  if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted yet (no carrier commit)`);
 
   const o = rec.packet.cs_opening;
-  const droneSeed = crypto.randomBytes(32).toString("hex");
-  const droneKey = await deriveDroneKey(droneSeed, sampleFieldSalt());
+  // The drone key IS the custody key: it must be the SAME key committed at accept
+  // (carrier_pk_commit → stored head), or the flight proof's `head` public won't
+  // match the on-chain head and submit_flight fails BadProof.
+  const droneKey = await deriveDroneKey(rec.carrierBJJ.seedHex, rec.carrierBJJ.pkBlind);
   const t0 = BigInt(Math.floor(Date.now() / 1000)); // fresh timestamps
 
   const scenario = await buildFlightScenario({

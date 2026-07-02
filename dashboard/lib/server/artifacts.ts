@@ -61,9 +61,12 @@ export const CT_AUDITOR_ID =
 
 // ── Network ──────────────────────────────────────────────────────────────────
 
-/** RPC endpoint. Local sandbox: http://127.0.0.1:8971 (pinned-IP proxy). */
+/** RPC endpoint. Prefers an explicit AEGIS_RPC_URL, then the user's keyed
+ * provider (e.g. Alchemy) in STELLAR_TESTNET_RPC_URL, then the public RPC. */
 export const RPC_URL =
-  process.env.AEGIS_RPC_URL || "https://soroban-testnet.stellar.org";
+  process.env.AEGIS_RPC_URL ||
+  process.env.STELLAR_TESTNET_RPC_URL ||
+  "https://soroban-testnet.stellar.org";
 
 export const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 
