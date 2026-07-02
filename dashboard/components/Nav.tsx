@@ -6,6 +6,8 @@ const links = [
   { href: "/verify", label: "Verify" },
 ];
 
+const cta = { href: "/demo", label: "Demo console" };
+
 export default function Nav() {
   return (
     <header className="border-b hairline">
@@ -19,6 +21,13 @@ export default function Nav() {
             <Link key={l.href} href={l.href} className="hover:text-white transition-colors">{l.label}</Link>
           ))}
         </div>
+        <Link
+          href={cta.href}
+          className="ml-auto text-sm font-semibold rounded-lg px-3.5 py-1.5 transition-opacity hover:opacity-90"
+          style={{ background: "var(--mint)", color: "var(--on-mint)" }}
+        >
+          {cta.label}
+        </Link>
       </nav>
     </header>
   );

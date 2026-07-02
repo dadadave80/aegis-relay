@@ -48,6 +48,44 @@ export default async function Home() {
         </p>
       </div>
 
+      {/* Primary CTA — the interactive demo console */}
+      <div className="max-w-2xl mx-auto mb-12">
+        <Link
+          href="/demo"
+          className="group card block p-6 sm:p-7 transition-[transform,border-color] hover:-translate-y-0.5"
+          style={{ borderColor: "color-mix(in srgb, var(--mint) 40%, transparent)" }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p
+                className="text-xs uppercase tracking-wider mb-1.5 inline-flex items-center gap-2"
+                style={{ color: "var(--mint)" }}
+              >
+                <span
+                  className="inline-block w-1.5 h-1.5 rounded-full"
+                  style={{ background: "var(--mint)" }}
+                  aria-hidden
+                />
+                Interactive demo console
+              </p>
+              <p className="text-lg sm:text-xl font-semibold tracking-tight">
+                Drive the whole lifecycle yourself
+              </p>
+              <p className="text-sm mt-1 leading-relaxed" style={{ color: "var(--text-dim)" }}>
+                Log in, switch between merchant, carrier, recipient, auditor and
+                attacker, and watch every proof settle live on testnet.
+              </p>
+            </div>
+            <span
+              className="shrink-0 inline-flex items-center gap-2 rounded-lg px-5 py-3 text-sm font-semibold transition-transform group-hover:translate-x-0.5"
+              style={{ background: "var(--mint)", color: "var(--on-mint)" }}
+            >
+              Launch demo console →
+            </span>
+          </div>
+        </Link>
+      </div>
+
       {/* Shipment lookup */}
       <div className="max-w-md mx-auto mb-14">
         <TrackLookup />
