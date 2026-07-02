@@ -9,7 +9,7 @@
 | Target repo | **New repo `aegis-relay`** — a separate project bootstrapped by transplanting proven primitives from the untouched v1 donor repo `dadadave80/aegis-zk-proof-of-reserves` (PIVOT §2 / Step 0). No prior hackathon submission exists; a fresh BUIDL is filed. |
 | Hackathon | Stellar Hacks: Real-World ZK (DoraHacks) — deadline **extended to 2026-07-03 17:00:00 UTC** (verified from page source epoch 1783098000) |
 | Chain | Stellar Testnet, Protocol 27, Soroban (`soroban-sdk` 26.x, `wasm32v1-none`) |
-| Proving stack | Circom 2.1.6 + snarkjs, Groth16, **BN254**, circomlib Poseidon + EdDSA-Poseidon (Baby Jubjub) |
+| Proving stack | Circom 2.2.3 + snarkjs, Groth16, **BN254**, circomlib Poseidon + EdDSA-Poseidon (Baby Jubjub) |
 | Escrow rails | Transparent XLM SAC (floor) + **confidential escrow** via the OpenZeppelin Confidential Token (UltraHonk/Grumpkin, consumed as a black box — §6.6) |
 | Host functions | BN254 group ops + `pairing_check` and the Poseidon permutation (CAP-74/75 primitives). v1's Groth16 verifier is *built from* these in `groth16_verifier.rs` (84 lines, live on testnet) — there is no single "verify" host fn; transplant that file. |
 | Companion doc | `PIVOT.md` — the execution playbook + verified reuse audit for Claude Code. This document is the *what/why*; that one is the *how/when*. |

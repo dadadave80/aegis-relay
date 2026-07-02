@@ -10,7 +10,7 @@ Privacy-preserving supply-chain custody & delivery settlement on Stellar. Groth1
 
 - `contracts/` — Soroban Cargo workspace (soroban-sdk 26.1.0, `hazmat-crypto`, target `wasm32v1-none`): `poseidon-merkle` (transplanted from v1, parity-pinned), `aegis-common`, `aegis-registry`, `aegis-credentials`, `aegis-airspace`.
 - `contracts-ct/` — SEPARATE workspace for the OpenZeppelin confidential-token fork (R3). Build with `stellar contract build` ONLY — plain cargo fails on `experimental_spec_shaking_v2`. Never merge with `contracts/`.
-- `circuits/` — circom 2.1.6. `lib/` gadgets + `delivery.circom`, `flight.circom`. Build via `circuits/build.mjs`.
+- `circuits/` — circom 2.2.3. `lib/` gadgets + `delivery.circom`, `flight.circom`. Build via `circuits/build.mjs`.
 - `prover/` — TypeScript CLIs (merchant/carrier/dronesim/authority) + `src/lib/` shared encoders.
 
 ## Hard rules (PIVOT §8 — violate none)

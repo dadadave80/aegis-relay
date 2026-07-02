@@ -5,7 +5,7 @@
 ## 0. Mission and hard constraints
 
 - **Deadline: 2026-07-03 17:00:00 UTC** (verified from the DoraHacks page source, epoch 1783098000; extended from June 29). T0 = 2026-07-02 13:18 UTC ⇒ ~27.7 usable hours; cutline budgets below keep their T+N shape with T0 fixed at that mark.
-- **Do not switch the Aegis proving toolchain.** Circom 2.1.6 + snarkjs + Groth16/BN254 is proven end-to-end in the v1 repo (live testnet verifier, Poseidon parity tests, encoders). The sunk substrate IS the competitive advantage (§2).
+- **Do not switch the Aegis proving toolchain.** Circom 2.2.3 + snarkjs + Groth16/BN254 is proven end-to-end in the v1 repo (live testnet verifier, Poseidon parity tests, encoders). The sunk substrate IS the competitive advantage (§2).
 - **Two proving stacks will coexist and must never be merged** (§3): Aegis circuits stay circom/Groth16/BN254/Baby-Jubjub/Poseidon; the adopted OpenZeppelin confidential token brings its own Noir/UltraHonk/Grumpkin/Poseidon2 stack, consumed strictly as a black-box contract + client SDK. Any attempt to "unify" them is a cut-immediately rabbit hole.
 - **No hackathon submission exists yet** (human-confirmed). There is nothing to preserve or edit on DoraHacks — a fresh BUIDL gets filed for Aegis Relay. The v1 repo is a read-only donor, never modified.
 - **Every threat row in DESIGN §12 (and the confidential-rail rows in DESIGN §6.6) marked with a test name must have that test.** Negative tests are not optional; a circuit or hook without its adversarial tests is not "done" at any cutline.
