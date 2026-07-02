@@ -37,13 +37,12 @@ export interface BuildTxReq {
 }
 export interface BuildTxRes {
   buildId: string;
-  hashHex: string;                    // tx.hash() hex — sign this with the wallet
+  xdr: string;                        // prepared unsigned tx XDR — the wallet signs this
   note?: string;
 }
 export interface SubmitTxReq {
   buildId: string;
-  signatureHex: string;               // 64-byte ed25519 sig from signRawHash
-  pubkey: string;                     // connected wallet address (for the sig hint)
+  signedXdr: string;                  // full signed tx XDR from the wallet (kit.signTransaction)
 }
 export interface SubmitTxRes {
   tx: string;                         // explorer tx hash / id

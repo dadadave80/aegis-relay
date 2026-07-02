@@ -5,11 +5,12 @@
  * Stellar action in the console. Each flow is the two-step non-custodial dance:
  *
  *   1. api.buildTx  — the STATELESS server builds + prepares the invoke with the
- *                     connected wallet as source, returns { buildId, hashHex }.
- *   2. signHash     — the connected Privy Stellar wallet signs that 32-byte hash
- *                     (pops the wallet confirmation — that IS the authorization).
- *   3. api.submitTx — the server attaches the signature + submits. It holds no
- *                     keys and cannot forge; the signature is the wallet's.
+ *                     connected wallet as source, returns { buildId, xdr }.
+ *   2. signTx       — the connected Stellar wallet (Stellar Wallets Kit) signs
+ *                     that full tx XDR (pops the wallet confirmation — that IS
+ *                     the authorization) and returns the signed XDR.
+ *   3. api.submitTx — the server submits the signed XDR. It holds no keys and
+ *                     cannot forge; the signature is the wallet's.
  *
  * Role panels call THESE for create/accept/submitFlight/deliver/refund, and the
  * plain api.* wrappers for the stateless server work (verify/fly/prove/pod/…).
@@ -33,7 +34,7 @@ export interface WalletFlows {
 }
 
 export function useWalletFlows(): WalletFlows {
-  const { stellarAddress, signHash } = useWallet();
+  const { stellarAddress, signTx } = useWallet();
 
   async function run(
     action: TxAction,
@@ -53,9 +54,9 @@ export function useWalletFlows(): WalletFlows {
       return { ok: false, error: built.error ?? "Could not build the transaction" };
     }
 
-    let signatureHex: string;
+    let signedXdr: string;
     try {
-      signatureHex = await signHash(built.data.hashHex);
+      signedXdr = await signTx(built.data.xdr);
     } catch (e) {
       return {
         ok: false,
@@ -63,11 +64,7 @@ export function useWalletFlows(): WalletFlows {
       };
     }
 
-    return api.submitTx({
-      buildId: built.data.buildId,
-      signatureHex,
-      pubkey: stellarAddress,
-    });
+    return api.submitTx({ buildId: built.data.buildId, signedXdr });
   }
 
   return {

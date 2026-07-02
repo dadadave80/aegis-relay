@@ -8,17 +8,11 @@
 
 import { useState } from "react";
 import Hash from "@/components/Hash";
-import { useAuth } from "@/app/providers";
 import { useWallet } from "@/lib/wallet-context";
 import { FALLBACK_CONTRACTS, accountLink, contractLink } from "./config";
 import { Spinner } from "./primitives";
 
 function Identity() {
-  const { user, mode } = useAuth();
-  const label =
-    mode === "guest"
-      ? "Guest session"
-      : (user?.email ?? user?.wallet ?? "Signed in");
   return (
     <div className="flex items-center gap-2.5 min-w-0">
       <span
@@ -27,9 +21,9 @@ function Identity() {
         style={{ background: "var(--mint)" }}
       />
       <div className="min-w-0">
-        <p className="text-sm font-medium truncate">{label}</p>
+        <p className="text-sm font-medium truncate">Wallet connected</p>
         <p className="text-xs" style={{ color: "var(--text-faint)" }}>
-          {mode === "privy" ? "Privy identity" : "local demo identity"}
+          Stellar testnet · non-custodial
         </p>
       </div>
     </div>
@@ -76,8 +70,7 @@ function WalletChip({
 }
 
 export default function TopBar() {
-  const { logout, mode } = useAuth();
-  const { stellarAddress, balanceXlm, funded, refreshBalance } = useWallet();
+  const { stellarAddress, balanceXlm, funded, refreshBalance, disconnect } = useWallet();
   const [refreshing, setRefreshing] = useState(false);
   const contracts = FALLBACK_CONTRACTS;
 
@@ -118,11 +111,11 @@ export default function TopBar() {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={logout}
+            onClick={() => void disconnect()}
             className="text-sm rounded-lg min-h-[40px] px-3.5 border hairline transition-[transform,opacity] active:scale-[0.96] hover:text-white"
             style={{ color: "var(--text-dim)" }}
           >
-            {mode === "guest" ? "Leave" : "Log out"}
+            Disconnect
           </button>
         </div>
       </div>

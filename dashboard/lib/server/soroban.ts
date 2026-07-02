@@ -20,7 +20,6 @@ import {
   Address,
   Contract,
   Keypair,
-  StrKey,
   TransactionBuilder,
   Transaction,
   nativeToScVal,
@@ -99,30 +98,21 @@ export interface SubmitResult {
 }
 
 /**
- * Reconstruct the cached tx from XDR, attach the wallet's signature (raw
- * ed25519 over the tx hash), submit, and poll until it lands. The signature is
- * verified against `pubkey` before it is attached — the server cannot forge.
+ * Submit a transaction the wallet already fully signed (Stellar Wallets Kit
+ * `signTransaction` returns a complete signed XDR), and poll until it lands.
+ * `expectXdr` is the unsigned tx the server built for this buildId; we require
+ * the signed tx to be that exact transaction (same hash) so a client cannot
+ * swap in a different tx than the one whose packet/proof the server holds.
  */
-export async function submitSigned(
-  txXdr: string,
-  signatureHex: string,
-  pubkey: string,
+export async function submitSignedXdr(
+  signedXdr: string,
+  expectXdr: string,
 ): Promise<SubmitResult> {
   const s = server();
-  const tx = TransactionBuilder.fromXDR(txXdr, NETWORK_PASSPHRASE) as Transaction;
-  const sigBuf = Buffer.from(signatureHex.replace(/^0x/, ""), "hex");
-
-  try {
-    // Verifies the signature matches pubkey over tx.hash() before attaching.
-    tx.addSignature(pubkey, sigBuf.toString("base64"));
-  } catch {
-    // Fallback: build the DecoratedSignature directly (hint = last 4 bytes of
-    // the StrKey-decoded pubkey). Used if addSignature is unavailable/strict.
-    const raw = StrKey.decodeEd25519PublicKey(pubkey);
-    const hint = raw.subarray(raw.length - 4);
-    tx.signatures.push(
-      new xdr.DecoratedSignature({ hint, signature: sigBuf }),
-    );
+  const tx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE) as Transaction;
+  const expected = TransactionBuilder.fromXDR(expectXdr, NETWORK_PASSPHRASE) as Transaction;
+  if (tx.hash().toString("hex") !== expected.hash().toString("hex")) {
+    throw new Error("signed transaction does not match the built transaction");
   }
 
   const sent = await s.sendTransaction(tx);

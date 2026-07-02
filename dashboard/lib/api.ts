@@ -32,6 +32,7 @@ export const api = {
   // two-step wallet-signed tx
   buildTx:      (b: BuildTxReq)  => post<BuildTxRes>("/api/tx/build", b),
   submitTx:     (b: SubmitTxReq) => post<SubmitTxRes>("/api/tx/submit", b),
+  // (BuildTxReq/SubmitTxReq now carry xdr / signedXdr — Stellar Wallets Kit)
   // stateless server work (no custody)
   faucet:       (address: string) => post<{ funded: boolean; balanceXlm: string | null }>("/api/faucet", { address }),
   verify:       (b: ShipmentReq)  => post<VerifyRes>("/api/carrier/verify", b),

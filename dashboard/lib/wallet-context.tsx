@@ -1,19 +1,13 @@
 "use client";
 
 /**
- * Wallet context — the connected Privy embedded **Stellar** wallet is the
- * single source of on-chain identity + custody for the console. No server keys.
+ * Wallet context — a real Stellar wallet (Freighter / Albedo / xBull / Lobstr /
+ * Hana / Rabet) connected via Stellar Wallets Kit is the single on-chain
+ * identity + custody for the console. No server keys: the kit signs the full
+ * Soroban transaction XDR the server builds, and the server just submits it.
  *
- * Two interchangeable modes, mirroring app/providers.tsx:
- *
- *   • privy  — reads the user's Stellar wallet from `user.linkedAccounts`
- *              (type "wallet", chainType "stellar"), auto-faucets it on connect,
- *              and signs 32-byte tx hashes with `useSignRawHash` (extended-chains).
- *   • guest  — no wallet. `stellarAddress` stays null and on-chain actions are
- *              gated with a "connect wallet" prompt (the board still browses).
- *
- * Both expose the SAME `useWallet()` shape so nothing downstream cares which is
- * active. Every network call goes through lib/api.ts, whose wrappers never throw.
+ * The kit is browser-only (custom elements + window), so it is imported LAZILY
+ * inside client-only code paths — never at module top — to keep SSR clean.
  */
 
 import {
@@ -25,42 +19,42 @@ import {
   useRef,
   useState,
 } from "react";
-import { usePrivy } from "@privy-io/react-auth";
-import type { WalletWithMetadata } from "@privy-io/react-auth";
-import { useSignRawHash } from "@privy-io/react-auth/extended-chains";
 import { api } from "./api";
-import { useAuth } from "@/app/providers";
+
+const PASSPHRASE = "Test SDF Network ; September 2015";
+const LS_KEY = "aegis-wallet-address";
 
 export interface WalletState {
-  /** Connected Privy Stellar wallet address (G…), or null when not provisioned. */
+  /** Connected Stellar wallet address (G…), or null when not connected. */
   stellarAddress: string | null;
-  /** Whether the wallet layer has finished its initial load. */
   ready: boolean;
-  /** Friendbot-funded (has an XLM balance) — drives the funding chip. */
+  connecting: boolean;
   funded: boolean;
-  /** Human XLM balance string, or null before the first faucet/read. */
   balanceXlm: string | null;
-  /** Auto-faucet the connected address once on connect + refresh the balance. */
+  /** Open the Stellar Wallets Kit modal to pick + connect a wallet. */
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
   ensureFunded: () => Promise<void>;
-  /** Re-read the balance (via the faucet route, which is fund-if-needed). */
   refreshBalance: () => Promise<void>;
   /**
-   * Sign a raw 32-byte tx hash (hex, with or without 0x) with the Stellar
-   * wallet. Pops the Privy signing UI — that confirmation IS the wallet
-   * authorizing the transaction. Returns the 64-byte ed25519 signature as hex
-   * (no 0x). Throws when no wallet is connected.
+   * Sign a prepared Soroban tx XDR with the connected wallet. Pops the wallet's
+   * signing UI — that confirmation IS the on-chain authorization. Returns the
+   * full signed tx XDR (kit `signTransaction` → `signedTxXdr`).
    */
-  signHash: (hashHex: string) => Promise<string>;
+  signTx: (xdr: string) => Promise<string>;
 }
 
 const FALLBACK: WalletState = {
   stellarAddress: null,
   ready: false,
+  connecting: false,
   funded: false,
   balanceXlm: null,
+  connect: async () => {},
+  disconnect: async () => {},
   ensureFunded: async () => {},
   refreshBalance: async () => {},
-  signHash: async () => {
+  signTx: async () => {
     throw new Error("Connect a Stellar wallet to sign");
   },
 };
@@ -71,27 +65,63 @@ export function useWallet(): WalletState {
   return useContext(WalletContext);
 }
 
-// ── Privy mode ───────────────────────────────────────────────────────────────
+// ── Kit singleton (lazy, browser-only) ───────────────────────────────────────
 
-function PrivyWalletBridge({ children }: { children: React.ReactNode }) {
-  const { ready, authenticated, user } = usePrivy();
-  const { signRawHash } = useSignRawHash();
+/* eslint-disable @typescript-eslint/no-explicit-any */
+let kitPromise: Promise<any> | null = null;
+async function getKit(): Promise<any> {
+  if (!kitPromise) {
+    kitPromise = (async () => {
+      const { StellarWalletsKit, Networks } = await import(
+        "@creit.tech/stellar-wallets-kit"
+      );
+      const [
+        { FreighterModule },
+        { AlbedoModule },
+        { xBullModule },
+        { LobstrModule },
+        { HanaModule },
+        { RabetModule },
+      ] = await Promise.all([
+        import("@creit.tech/stellar-wallets-kit/modules/freighter"),
+        import("@creit.tech/stellar-wallets-kit/modules/albedo"),
+        import("@creit.tech/stellar-wallets-kit/modules/xbull"),
+        import("@creit.tech/stellar-wallets-kit/modules/lobstr"),
+        import("@creit.tech/stellar-wallets-kit/modules/hana"),
+        import("@creit.tech/stellar-wallets-kit/modules/rabet"),
+      ]);
+      StellarWalletsKit.init({
+        network: Networks.TESTNET,
+        modules: [
+          new FreighterModule(),
+          new AlbedoModule(),
+          new xBullModule(),
+          new LobstrModule(),
+          new HanaModule(),
+          new RabetModule(),
+        ],
+      });
+      return StellarWalletsKit;
+    })();
+  }
+  return kitPromise;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
-  const stellarAddress = useMemo<string | null>(() => {
-    const acct = user?.linkedAccounts?.find(
-      (a): a is WalletWithMetadata =>
-        a.type === "wallet" && a.chainType === "stellar",
-    );
-    return acct?.address ?? null;
-  }, [user]);
+// ── Provider ─────────────────────────────────────────────────────────────────
 
+export function WalletProvider({ children }: { children: React.ReactNode }) {
+  const [stellarAddress, setStellarAddress] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [funded, setFunded] = useState(false);
   const [balanceXlm, setBalanceXlm] = useState<string | null>(null);
   const ensuredRef = useRef<string | null>(null);
 
-  const applyFaucet = useCallback(async () => {
-    if (!stellarAddress) return;
-    const r = await api.faucet(stellarAddress);
+  const applyFaucet = useCallback(async (addr: string | null) => {
+    const a = addr ?? stellarAddress;
+    if (!a) return;
+    const r = await api.faucet(a);
     if (r.ok && r.data) {
       setFunded(r.data.funded);
       setBalanceXlm(r.data.balanceXlm);
@@ -102,78 +132,90 @@ function PrivyWalletBridge({ children }: { children: React.ReactNode }) {
     if (!stellarAddress) return;
     if (ensuredRef.current === stellarAddress) return;
     ensuredRef.current = stellarAddress;
-    await applyFaucet();
+    await applyFaucet(stellarAddress);
   }, [stellarAddress, applyFaucet]);
 
-  // Auto-faucet on connect: fund the freshly provisioned wallet once so it can
-  // pay tx fees, then surface the balance. Async setState (not synchronous in
-  // the effect body), so exempt from the no-setState-in-effect heuristic.
+  // Restore a previously connected wallet on mount (the kit persists the chosen
+  // wallet; getAddress() re-reads it). Best-effort — silent if none.
   useEffect(() => {
-    if (authenticated && stellarAddress) void ensureFunded();
-  }, [authenticated, stellarAddress, ensureFunded]);
+    let cancelled = false;
+    (async () => {
+      const saved = typeof window !== "undefined" ? window.localStorage.getItem(LS_KEY) : null;
+      if (saved) {
+        try {
+          const kit = await getKit();
+          const { address } = await kit.getAddress();
+          if (!cancelled && address) setStellarAddress(address);
+        } catch {
+          if (!cancelled) window.localStorage.removeItem(LS_KEY);
+        }
+      }
+      if (!cancelled) setReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
-  const signHash = useCallback(
-    async (hashHex: string): Promise<string> => {
+  // Auto-faucet once whenever a wallet becomes connected.
+  useEffect(() => {
+    if (stellarAddress) void ensureFunded();
+  }, [stellarAddress, ensureFunded]);
+
+  const connect = useCallback(async () => {
+    setConnecting(true);
+    try {
+      const kit = await getKit();
+      const { address } = await kit.authModal();
+      if (address) {
+        window.localStorage.setItem(LS_KEY, address);
+        setStellarAddress(address);
+      }
+    } finally {
+      setConnecting(false);
+    }
+  }, []);
+
+  const disconnect = useCallback(async () => {
+    try {
+      const kit = await getKit();
+      await kit.disconnect();
+    } catch {
+      /* ignore */
+    }
+    window.localStorage.removeItem(LS_KEY);
+    ensuredRef.current = null;
+    setStellarAddress(null);
+    setFunded(false);
+    setBalanceXlm(null);
+  }, []);
+
+  const signTx = useCallback(
+    async (xdr: string): Promise<string> => {
       if (!stellarAddress) throw new Error("Connect a Stellar wallet to sign");
-      const hash = (
-        hashHex.startsWith("0x") ? hashHex : `0x${hashHex}`
-      ) as `0x${string}`;
-      const { signature } = await signRawHash({
+      const kit = await getKit();
+      const { signedTxXdr } = await kit.signTransaction(xdr, {
         address: stellarAddress,
-        chainType: "stellar",
-        hash,
+        networkPassphrase: PASSPHRASE,
       });
-      return signature.startsWith("0x") ? signature.slice(2) : signature;
+      return signedTxXdr;
     },
-    [stellarAddress, signRawHash],
+    [stellarAddress],
   );
 
   const value = useMemo<WalletState>(
     () => ({
       stellarAddress,
       ready,
+      connecting,
       funded,
       balanceXlm,
+      connect,
+      disconnect,
       ensureFunded,
-      refreshBalance: applyFaucet,
-      signHash,
+      refreshBalance: () => applyFaucet(null),
+      signTx,
     }),
-    [stellarAddress, ready, funded, balanceXlm, ensureFunded, applyFaucet, signHash],
+    [stellarAddress, ready, connecting, funded, balanceXlm, connect, disconnect, ensureFunded, applyFaucet, signTx],
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
-}
-
-// ── Guest mode ───────────────────────────────────────────────────────────────
-
-function GuestWalletProvider({ children }: { children: React.ReactNode }) {
-  const value = useMemo<WalletState>(
-    () => ({
-      stellarAddress: null,
-      ready: true,
-      funded: false,
-      balanceXlm: null,
-      ensureFunded: async () => {},
-      refreshBalance: async () => {},
-      signHash: async () => {
-        throw new Error(
-          "Wallet signing needs a Privy app id (NEXT_PUBLIC_PRIVY_APP_ID)",
-        );
-      },
-    }),
-    [],
-  );
-  return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
-}
-
-// ── Root ─────────────────────────────────────────────────────────────────────
-
-export function WalletProvider({ children }: { children: React.ReactNode }) {
-  const { mode } = useAuth();
-  // `mode` is fixed for the session (chosen by NEXT_PUBLIC_PRIVY_APP_ID at build
-  // time), so this branch never flips — each subtree keeps stable hook order.
-  if (mode === "privy") {
-    return <PrivyWalletBridge>{children}</PrivyWalletBridge>;
-  }
-  return <GuestWalletProvider>{children}</GuestWalletProvider>;
 }

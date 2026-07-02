@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * Pre-auth screen. In Privy mode it's "Log in to drive the demo"; in guest
- * mode (no NEXT_PUBLIC_PRIVY_APP_ID) it's "Enter demo" — same downstream
- * console either way.
+ * Pre-connect screen. "Connect wallet" opens the Stellar Wallets Kit modal
+ * (Freighter / Albedo / xBull / Lobstr / Hana / Rabet); once connected the
+ * console takes over.
  */
 
-import { useAuth } from "@/app/providers";
+import { useWallet } from "@/lib/wallet-context";
 import { ActionButton } from "./primitives";
 
 const BEATS = [
@@ -28,8 +28,7 @@ const BEATS = [
 ];
 
 export default function LoginScreen() {
-  const { login, mode, ready } = useAuth();
-  const isGuest = mode === "guest";
+  const { connect, connecting, ready } = useWallet();
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-16 sm:py-24">
@@ -89,19 +88,18 @@ export default function LoginScreen() {
         style={{ animationDelay: "200ms" }}
       >
         <ActionButton
-          onClick={login}
-          disabled={!ready}
-          loading={!ready}
-          loadingLabel="Loading…"
+          onClick={connect}
+          disabled={!ready || connecting}
+          loading={!ready || connecting}
+          loadingLabel={connecting ? "Connecting…" : "Loading…"}
           className="px-8 py-3.5 text-base"
         >
-          {isGuest ? "Enter demo →" : "Log in to drive the demo →"}
+          Connect wallet →
         </ActionButton>
         <p className="text-xs text-center" style={{ color: "var(--text-faint)" }}>
-          {isGuest
-            ? "No account needed — a local demo session is minted for you."
-            : "Email, wallet or Google — Privy provisions a non-custodial Stellar wallet that signs every action."}{" "}
-          It auto-funds via friendbot on connect (a few seconds).
+          Freighter, Albedo, xBull, Lobstr, Hana or Rabet — your wallet signs
+          every action (non-custodial). It auto-funds via friendbot on connect
+          (a few seconds).
         </p>
       </div>
     </div>

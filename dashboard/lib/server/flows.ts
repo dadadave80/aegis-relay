@@ -30,7 +30,7 @@ import type { SnarkjsProof } from "./prover-dist/lib/bn254.js";
 
 import {
   buildInvoke,
-  submitSigned,
+  submitSignedXdr,
   simulateInvoke,
   readShipmentRaw,
   scU64,
@@ -253,7 +253,7 @@ async function buildCreate(source: string, p: Partial<CreateParams>): Promise<Bu
     packet: built.packet,
     meta,
   });
-  return { buildId: tx.buildId, hashHex: tx.hashHex, note: `C_S=${built.packet.c_s}` };
+  return { buildId: tx.buildId, xdr: tx.xdr, note: `C_S=${built.packet.c_s}` };
 }
 
 async function buildAccept(source: string, id: number): Promise<BuildTxRes> {
@@ -275,7 +275,7 @@ async function buildAccept(source: string, id: number): Promise<BuildTxRes> {
     shipmentId: String(id),
     carrierBJJ,
   });
-  return { buildId: tx.buildId, hashHex: tx.hashHex, note: `carrier_pk_commit=${carrierBJJ.commit}` };
+  return { buildId: tx.buildId, xdr: tx.xdr, note: `carrier_pk_commit=${carrierBJJ.commit}` };
 }
 
 async function buildSubmitFlight(source: string, id: number): Promise<BuildTxRes> {
@@ -285,7 +285,7 @@ async function buildSubmitFlight(source: string, id: number): Promise<BuildTxRes
   const args = [scU64(id), scProof(rec.flightProof.proof), scU64(pub[4]), scU64(pub[5])];
   const tx = await buildInvoke("submit_flight", source, args);
   store.putPending({ buildId: tx.buildId, action: "submitFlight", source, xdr: tx.xdr, shipmentId: String(id) });
-  return { buildId: tx.buildId, hashHex: tx.hashHex };
+  return { buildId: tx.buildId, xdr: tx.xdr };
 }
 
 async function buildDeliver(source: string, id: number): Promise<BuildTxRes> {
@@ -295,14 +295,14 @@ async function buildDeliver(source: string, id: number): Promise<BuildTxRes> {
   const args = [scU64(id), scProof(rec.deliveryProof.proof), scU256(pub[3]), scU64(pub[4])];
   const tx = await buildInvoke("deliver", source, args);
   store.putPending({ buildId: tx.buildId, action: "deliver", source, xdr: tx.xdr, shipmentId: String(id) });
-  return { buildId: tx.buildId, hashHex: tx.hashHex };
+  return { buildId: tx.buildId, xdr: tx.xdr };
 }
 
 async function buildRefund(source: string, id: number): Promise<BuildTxRes> {
   const args = [scU64(id)];
   const tx = await buildInvoke("refund_expired", source, args);
   store.putPending({ buildId: tx.buildId, action: "refund", source, xdr: tx.xdr, shipmentId: String(id) });
-  return { buildId: tx.buildId, hashHex: tx.hashHex };
+  return { buildId: tx.buildId, xdr: tx.xdr };
 }
 
 // ── submit (attach signature, persist packet on create) ──────────────────────
@@ -310,7 +310,7 @@ async function buildRefund(source: string, id: number): Promise<BuildTxRes> {
 export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
   const pend = store.getPending(req.buildId);
   if (!pend) throw new Error(`no pending tx for buildId ${req.buildId}`);
-  const res = await submitSigned(pend.xdr, req.signatureHex, req.pubkey);
+  const res = await submitSignedXdr(req.signedXdr, pend.xdr);
 
   let shipmentId: number | undefined;
   if (pend.action === "create") {
