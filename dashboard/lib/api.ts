@@ -1,9 +1,10 @@
-// Client-side API wrapper — the console (app/demo/**) calls these; the server
-// (app/api/**) implements the matching routes. Shapes come from ./types.
+// Client-side fetch layer — thin wrappers over the STATELESS server routes.
+// On-chain actions go through buildTx → (wallet signs) → submitTx; the
+// orchestration lives in lib/wallet-flows.ts (useWalletFlows). Shapes: ./types.
 "use client";
 import type {
-  SessionInfo, ShipmentView, ActionResult, CreateReq, CreateRes,
-  ShipmentReq, VerifyRes, FlyRes, SignPodReq, AuditRes, AttackReq, AttackRes,
+  ShipmentView, ActionResult, BuildTxReq, BuildTxRes, SubmitTxReq, SubmitTxRes,
+  VerifyRes, FlyRes, SignPodReq, AuditRes, AttackReq, AttackRes, ShipmentReq,
 } from "./types";
 
 async function post<T>(path: string, body: unknown): Promise<ActionResult<T>> {
@@ -18,7 +19,6 @@ async function post<T>(path: string, body: unknown): Promise<ActionResult<T>> {
     return { ok: false, error: String(e) };
   }
 }
-
 async function get<T>(path: string): Promise<ActionResult<T>> {
   try {
     const r = await fetch(path);
@@ -28,28 +28,17 @@ async function get<T>(path: string): Promise<ActionResult<T>> {
   }
 }
 
-/** localStorage-persisted session id (Privy user id when logged in, else uuid). */
-export function ensureSessionId(seed?: string): string {
-  if (typeof window === "undefined") return "";
-  const KEY = "aegis-demo-session";
-  if (seed) { window.localStorage.setItem(KEY, seed); return seed; }
-  let id = window.localStorage.getItem(KEY);
-  if (!id) { id = crypto.randomUUID(); window.localStorage.setItem(KEY, id); }
-  return id;
-}
-
 export const api = {
-  session:      (sessionId: string) => post<SessionInfo>("/api/session", { sessionId }),
-  refresh:      (sessionId: string) => get<SessionInfo>(`/api/session?sessionId=${encodeURIComponent(sessionId)}`),
-  create:       (body: CreateReq)   => post<CreateRes>("/api/merchant/create", body),
-  verify:       (body: ShipmentReq) => post<VerifyRes>("/api/carrier/verify", body),
-  accept:       (body: ShipmentReq) => post<ShipmentView>("/api/carrier/accept", body),
-  fly:          (body: ShipmentReq) => post<FlyRes>("/api/drone/fly", body),
-  submitFlight: (body: ShipmentReq) => post<ShipmentView>("/api/drone/submit", body),
-  signPod:      (body: SignPodReq)  => post<{ signed: boolean }>("/api/recipient/sign-pod", body),
-  proveDeliver: (body: ShipmentReq) => post<{ ready: boolean }>("/api/carrier/prove-deliver", body),
-  deliver:      (body: ShipmentReq) => post<ShipmentView>("/api/carrier/deliver", body),
-  audit:        (body: ShipmentReq) => post<AuditRes>("/api/confidential/audit", body),
-  attack:       (body: AttackReq)   => post<AttackRes>("/api/attack", body),
-  shipment:     (id: number)        => get<ShipmentView>(`/api/shipment/${id}`),
+  // two-step wallet-signed tx
+  buildTx:      (b: BuildTxReq)  => post<BuildTxRes>("/api/tx/build", b),
+  submitTx:     (b: SubmitTxReq) => post<SubmitTxRes>("/api/tx/submit", b),
+  // stateless server work (no custody)
+  faucet:       (address: string) => post<{ funded: boolean; balanceXlm: string | null }>("/api/faucet", { address }),
+  verify:       (b: ShipmentReq)  => post<VerifyRes>("/api/carrier/verify", b),
+  fly:          (b: ShipmentReq)  => post<FlyRes>("/api/drone/fly", b),
+  proveDeliver: (b: ShipmentReq)  => post<{ ready: boolean }>("/api/prove-delivery", b),
+  signPod:      (b: SignPodReq)   => post<{ signed: boolean }>("/api/recipient-pod", b),
+  audit:        (b: ShipmentReq)  => post<AuditRes>("/api/confidential/audit", b),
+  attack:       (b: AttackReq)    => post<AttackRes>("/api/attack", b),
+  shipment:     (id: number)      => get<ShipmentView>(`/api/shipment/${id}`),
 };

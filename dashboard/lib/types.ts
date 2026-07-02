@@ -9,12 +9,11 @@ export type Rail = "transparent" | "confidential";
 /** Registry state enum, mirrored from contracts/aegis-registry State. */
 export type ShipmentState = "OPEN" | "IN_TRANSIT" | "DELIVERED" | "EXPIRED" | "UNKNOWN";
 
-/** Per-session role accounts, auto-funded via friendbot. */
-export interface SessionInfo {
-  sessionId: string;
-  merchant: { address: string; funded: boolean; balanceXlm: string | null };
-  carrier: { address: string; funded: boolean; balanceXlm: string | null };
-  /** Recipient never holds a Stellar account — only an in-packet Baby Jubjub key. */
+/** The connected wallet's on-chain identity + the deployment it acts on. */
+export interface WalletInfo {
+  address: string;               // the connected Privy Stellar wallet (G...)
+  funded: boolean;
+  balanceXlm: string | null;
   contracts: {
     registry: string;
     airspace: string;
@@ -24,6 +23,32 @@ export interface SessionInfo {
     explorerBase: string; // https://stellar.expert/explorer/testnet/contract/
     txBase: string;       // https://stellar.expert/explorer/testnet/tx/
   };
+}
+
+// ── Two-step wallet-signed transaction flow (server builds, wallet signs, server submits) ──
+
+export type TxAction = "create" | "accept" | "submitFlight" | "deliver" | "refund";
+
+export interface BuildTxReq {
+  action: TxAction;
+  source: string;                     // connected wallet address (tx source + role arg)
+  shipmentId?: number;                // for accept/submitFlight/deliver/refund
+  params?: Record<string, unknown>;   // create form fields, etc.
+}
+export interface BuildTxRes {
+  buildId: string;
+  hashHex: string;                    // tx.hash() hex — sign this with the wallet
+  note?: string;
+}
+export interface SubmitTxReq {
+  buildId: string;
+  signatureHex: string;               // 64-byte ed25519 sig from signRawHash
+  pubkey: string;                     // connected wallet address (for the sig hint)
+}
+export interface SubmitTxRes {
+  tx: string;                         // explorer tx hash / id
+  shipmentId?: number;                // assigned on create
+  view?: ShipmentView;
 }
 
 /** What the chain sees vs. what stays hidden — drives the money-shot panel. */
@@ -58,8 +83,8 @@ export interface ActionResult<T = unknown> {
 
 // ── Request payloads (POST bodies) ──────────────────────────────────────────
 
-export interface CreateReq {
-  sessionId: string;
+/** Merchant create form → goes into BuildTxReq.params for action:"create". */
+export interface CreateParams {
   toLat: number; toLon: number;
   fromLat?: number; fromLon?: number; // drone origin; defaults sensible
   amount: number;                     // XLM (whole units); server converts to stroops
@@ -67,9 +92,8 @@ export interface CreateReq {
   rail: Rail;
   deadlineHours?: number;             // default 24
 }
-export interface CreateRes { shipmentId: number; view: ShipmentView; }
 
-export interface ShipmentReq { sessionId: string; shipmentId: number; }
+export interface ShipmentReq { shipmentId: number; }
 
 export interface VerifyRes { match: boolean; cs: string; onchainCs: string; }
 

@@ -1,96 +1,105 @@
-# Interactive demo architecture — pinned contract
+# Interactive app architecture — pinned contract (wallet-signing / non-custodial)
 
-The dashboard becomes a **click-driven demo console**: every CLI script in
-`docs/demo-script.md` becomes a button. Judges (or the founder screen-sharing)
-log in, switch roles, and drive the full lifecycle from the browser.
+A real dApp, not a relayer console: **connect a Privy wallet → pick a role →
+your wallet authorizes that role's on-chain actions.** No server-held Stellar
+keys.
 
-## Decisions (do not relitigate)
+## Decisions (final — do not relitigate)
 
-- **Privy = login/identity only** (`@privy-io/react-auth` v3, installed). It gives
-  the "good UX" entry gate (email/social login). It does **not** sign Stellar txs.
-  If `NEXT_PUBLIC_PRIVY_APP_ID` is unset, the app runs in **guest mode** (a
-  "Enter demo" button that mints a local session id) so it works with zero config.
-- **All Stellar txs + all proving happen server-side** in Next API routes
-  (node runtime). Per-session role keypairs live in a server vault, auto-funded
-  via friendbot. This is the "open relayer demo affordance" already documented as
-  an honest limitation — it makes the demo bulletproof (no extension, no wallet
-  popups mid-demo). Recipient PoD signing is server-side too (the packet's Baby
-  Jubjub key), framed in the UI as "the recipient's device signs."
-- **Role switching** is a UI control — the founder flips Merchant → Carrier →
-  Recipient → Auditor → Attacker freely. One session, all roles.
-- Contracts = the **final deployment** (see `docs/testnet.md`; already in
-  `dashboard/lib/contract.ts`). Registry shipment ids are global/sequential.
-- Reuse, don't rewrite: server code imports the pure helpers from
-  `../prover/src/lib/{poseidon,constants,bn254,tree,packet}.ts` and the flow
-  logic patterns from `../prover/src/{carrier,recipient,dronesim}.ts` +
-  `../prover/src/lib/flight.ts`. Turbopack root is the repo, so these resolve.
-- Proving artifacts on the server: `../circuits/build/{delivery_final.zkey,
-  delivery_js/delivery.wasm,flight_final.zkey,flight_js/flight.wasm}` (present
-  locally; gitignored). VKs: `../circuits/fixtures/{delivery,flight}/verification_key.json`.
-  Path via env `AEGIS_ARTIFACTS_DIR` (default `../circuits/build`).
-- RPC: env `AEGIS_RPC_URL` (default the public testnet RPC; set to
-  `http://127.0.0.1:8971` in local dev to use the sandbox proxy). Passphrase
+- **Privy embedded Stellar wallet signs every Stellar transaction.** Privy
+  supports Stellar at Tier 2 (`@privy-io/react-auth/extended-chains`):
+  `useCreateWallet({chainType:"stellar"})` provisions it, `useSignRawHash({address,
+  chainType:"stellar", hash})` signs a 32-byte hash → `{signature}`. That is the
+  only client-side crypto we need.
+- **Soroban `require_auth` is satisfied by the transaction SOURCE-ACCOUNT
+  signature.** So for `create_shipment(merchant,…)` we set the connected wallet
+  as BOTH the `merchant` arg AND the tx source; the wallet's envelope signature
+  authorizes it. Same for `accept` (carrier = connected wallet = source = payout).
+  `submit_flight`/`deliver`/`refund_expired` are permissionless — the connected
+  wallet is just the source (pays the fee) and signs the envelope. **No separate
+  SorobanAuthorizationEntry signing is needed.**
+- **Two-step tx flow (server builds, wallet signs, server submits — server holds
+  NO keys):**
+  1. `POST /api/tx/build` → server builds the invoke with the connected pubkey as
+     source, `rpc.Server.prepareTransaction` (simulate + assemble), caches the
+     prepared tx by `buildId`, returns `{buildId, hashHex}` (hashHex = `tx.hash()`).
+  2. Client: `signRawHash({address, chainType:"stellar", hash:"0x"+hashHex})` → sig.
+  3. `POST /api/tx/submit {buildId, signatureHex, pubkey}` → server loads the
+     cached tx, attaches a `DecoratedSignature` (hint = last 4 bytes of the
+     StrKey-decoded pubkey, signature = the 64 raw bytes), `sendTransaction`, polls
+     `getTransaction`, returns `{tx, shipmentId?, view?}`. The server cannot forge
+     — the signature is the wallet's.
+- **All Poseidon / circom / proving / packet crypto runs SERVER-SIDE** (stateless,
+  no custody): the server reuses `../prover/src/lib/*` + the flow logic. Proving
+  isn't custody; the only custody op is the Stellar signature, which the wallet does.
+- **Auto-faucet:** on connect, friendbot-fund the connected Stellar address
+  (`POST /api/faucet {address}` proxies `https://friendbot.stellar.org?addr=`).
+- **Role model:** one connected wallet = one Stellar identity; the role switcher
+  selects which role's actions you perform. Playing all roles yourself → your one
+  wallet is merchant+carrier (the registry allows it). Two people → two wallets;
+  the packet mailbox lets a second wallet carry a shipment the first created.
+- **Recipient** never signs a Stellar tx — the PoD is a Baby Jubjub (circuit)
+  signature over the packet's claim key. `POST /api/recipient-pod` signs it
+  server-side with the packet's claim seed (the "claim link" the merchant issued),
+  stored in the mailbox. Framed in UI as "the recipient's device signs."
+- Contracts = the final deployment (docs/testnet.md; already in
+  `dashboard/lib/contract.ts`). RPC via `AEGIS_RPC_URL` (default public testnet;
+  `http://127.0.0.1:8971` proxy in local sandbox). Passphrase
   "Test SDF Network ; September 2015".
+- Proving artifacts: `../circuits/build/{delivery_final.zkey,delivery_js/
+  delivery.wasm,flight_final.zkey,flight_js/flight.wasm}`; VKs under
+  `../circuits/fixtures/*`. Path base env `AEGIS_ARTIFACTS_DIR` (default
+  `<repo>/circuits/build`).
 
-## Shared contract
-
-`dashboard/lib/types.ts` (types) and `dashboard/lib/api.ts` (client wrappers)
-are the pinned interface. Server routes MUST match those shapes exactly.
-
-## API routes (server owns app/api/**, lib/server/**)
+## Server (owns app/api/**, lib/server/**) — STATELESS, no Stellar keys
 
 | Route | Body → | Does |
 |---|---|---|
-| `POST /api/session` | `{sessionId}` | vault.getOrCreate: gen merchant+carrier keypairs, friendbot-fund (idempotent, parallel), return `SessionInfo` |
-| `GET /api/session?sessionId=` | — | current addresses + live balances |
-| `POST /api/merchant/create` | `CreateReq` | build C_S + packet (reuse merchant flow), submit `create_shipment` signed by session merchant, store packet server-side keyed by shipmentId, return `CreateRes` |
-| `POST /api/carrier/verify` | `ShipmentReq` | recompute C_S from stored packet vs on-chain `status` → `VerifyRes` (T12) |
-| `POST /api/carrier/accept` | `ShipmentReq` | session carrier signs `accept` (payout=carrier), store carrier pk-commit/blind server-side, return updated `ShipmentView` |
-| `POST /api/drone/fly` | `ShipmentReq` | dronesim honest flight + snarkjs flight prove; store proof; return `FlyRes` (waypoints for the map) |
-| `POST /api/drone/submit` | `ShipmentReq` | submit_flight; return `ShipmentView` (flightOk) |
-| `POST /api/recipient/sign-pod` | `SignPodReq` | derive BJJ key from stored packet claim seed, sign PoD, store pod |
-| `POST /api/carrier/prove-deliver` | `ShipmentReq` | assemble delivery witness (packet+pod), snarkjs prove; store proof |
-| `POST /api/carrier/deliver` | `ShipmentReq` | submit `deliver`; return `ShipmentView` (DELIVERED, escrow released) |
-| `POST /api/confidential/audit` | `ShipmentReq` | auditor decrypt of the last confidential settlement → `AuditRes` |
-| `POST /api/attack` | `AttackReq` | run the chosen attack, capture the on-chain/witness rejection → `AttackRes` |
+| `POST /api/tx/build` | `BuildTxReq` | build+prepare the named invoke with `source`=connected pubkey; for `create` also generate the shipment packet (C_S opening + recipient BJJ claim seed) and hold it pending; for `accept` generate the per-shipment carrier BJJ key + carrier_pk_commit. Cache prepared tx by `buildId`. → `BuildTxRes{buildId, hashHex, meta?}` |
+| `POST /api/tx/submit` | `SubmitTxReq` | attach the wallet signature, submit, poll; on `create` capture the assigned `shipmentId` from the return value and persist the packet under it; → `SubmitTxRes{tx, shipmentId?, view?}` |
+| `POST /api/drone/fly` | `ShipmentReq` | dronesim honest flight + snarkjs flight prove; store proof; → `FlyRes` (waypoints) |
+| `POST /api/prove-delivery` | `ShipmentReq` | assemble delivery witness (packet + carrier BJJ + pod) + snarkjs prove; store proof |
+| `POST /api/recipient-pod` | `SignPodReq` | sign PoD with the packet claim seed; store pod |
+| `POST /api/confidential/audit` | `ShipmentReq` | auditor decrypt → `AuditRes` |
+| `POST /api/attack` | `AttackReq` | run the chosen attack, capture the rejection verbatim → `AttackRes` |
+| `POST /api/faucet` | `{address}` | friendbot-fund; → `{funded, balanceXlm}` |
 | `GET /api/shipment/[id]` | — | on-chain `status` → `ShipmentView` |
 
-**Confidential rail:** create/accept/deliver share the transparent routes with
-`rail:"confidential"`. Escrow funding + hook-caged settle + auditor decrypt reuse
-`../prover/src/confidential.ts` logic server-side. If wiring `@ctd/sdk` into the
-Next bundle proves too heavy in the time budget, the confidential CREATE may fall
-back to displaying the already-live confidential shipment (docs/testnet.md, tx
-`2d990d64…`) with a real auditor-decrypt call — the "hidden amount → regulator
-decrypts" beat must land either way. Document whichever path shipped.
+`build` supports `action`: `create | accept | submitFlight | deliver | refund`.
+For `submitFlight`/`deliver` the server injects the stored proof + nullifier + ts.
+Store (mailbox) keyed by shipmentId in a gitignored dir + in-memory Map; holds
+packet, carrier BJJ, pod, proofs. Never return BJJ/claim seeds to the client.
+Reuse `@stellar/stellar-sdk` (dep) for build/sign-attach/submit; reuse
+`../prover/src/lib/{poseidon,constants,bn254,tree,packet}.ts` + flow logic. Add
+`serverExternalPackages:["snarkjs","circomlibjs"]` to next.config.ts (keep the
+existing turbopack.root). `export const runtime="nodejs"` on every route.
 
-**Tx submission:** use `@stellar/stellar-sdk` (v16, already a dep) with in-memory
-`Keypair`s — build the contract invoke, `rpc.Server.prepareTransaction`, sign,
-send, poll. Enum args (Method/Rail) are **u32** (`nativeToScVal(n, {type:'u32'})`);
-U256 via `nativeToScVal` with the ScVal U256 form or the pattern in
-`prover/src/lib/bn254.ts`; Address/i128/vec per SDK. Capture contract error codes
-verbatim for the attack beats (do NOT swallow them).
+## Client (owns app/providers.tsx, app/demo/**, components/demo/**, lib/wallet-flows.ts, lib/wallet-context.tsx, lib/api.ts, session-context)
 
-**Vault** (`lib/server/vault.ts`, server-only): `Map<sessionId, {merchant, carrier,
-recipientSeedHex}>` cached to a gitignored file so dev restarts keep keys. Never
-return secret seeds to the client. Friendbot: `GET https://friendbot.stellar.org?addr=`.
+- providers.tsx: `PrivyProvider` (appId from `NEXT_PUBLIC_PRIVY_APP_ID`; guest
+  fallback if unset). Config: dark theme, mint accent, `loginMethods
+  ["email","wallet","google"]`. On login ensure a Stellar wallet via
+  `useCreateWallet({chainType:"stellar"})` if the user has none.
+- wallet-context: expose `{stellarAddress, ready, funded, ensureFunded(), signHash(hex)}`
+  where `signHash` wraps `useSignRawHash`. Guest mode: no wallet → gate actions with
+  a "connect wallet" prompt (guest can still browse the board).
+- `lib/wallet-flows.ts` — the orchestration hook `useWalletFlows()` exposing
+  `create/accept/submitFlight/deliver/refund`, each = `api.buildTx(...)` →
+  `signHash(hashHex)` → `api.submitTx(...)`, returning the `SubmitTxRes`. The role
+  panels call THESE for on-chain actions and `api.*` for stateless ones
+  (proveDelivery, fly, recipientPod, audit, attack, shipment).
+- `lib/api.ts` — thin fetch wrappers for every server route (already the shape to
+  match; update to the routes above).
+- The existing console (components/demo/*: Console, RoleSwitcher, LifecycleBoard,
+  SeenVsHidden, CorridorMini, RolePanels, DemoTimeline, LoginScreen, TopBar,
+  primitives, toast) is committed and REUSED — rewire the RolePanels action
+  handlers from the old relayer `api.create/accept/...` to `useWalletFlows()`, and
+  replace the old "server role vault" session provisioning with wallet connect +
+  auto-faucet. Keep the design, the board, the seen-vs-hidden money-shot, the
+  attack cards, the drone honesty line.
 
-## Client (UI owns app/demo/**, components/**, app/providers.tsx, app/layout.tsx)
-
-- `app/providers.tsx` — PrivyProvider (when app id set) + guest fallback + a
-  React context exposing `{sessionId, session, role, setRole, refresh}`.
-- `app/demo/page.tsx` — the console: top bar (login state, funded role balances,
-  contract links), a **role switcher**, a **lifecycle board** (the current
-  shipment's timeline + seen-vs-hidden panel + explorer links + corridor map),
-  and the per-role action panel.
-- Role panels: **Merchant** (create form: dest, amount, method, rail →
-  Create), **Carrier** (pick shipment → Verify → Accept → for drone: Fly &
-  Prove → Submit Flight → Prove Delivery → Deliver), **Recipient** (Sign
-  proof-of-delivery), **Auditor** (Decrypt confidential amount), **Attacker**
-  (buttons for each attack → shows the red rejection + error code).
-- Reuse the existing dark/mint design system (`app/globals.css`, components
-  `StatusBadge`, `Hash`, `MetricTile`, `ShipmentTimeline`, `Redacted`). Keep the
-  informational pages (`/`, `/map`, `/verify`); make `/demo` the star and link it
-  prominently from `/`.
-- Every long action shows a spinner + step label; failures render inline (never
-  crash the page). Poll `GET /api/shipment/[id]` after each mutation to refresh
-  the board.
+## Honesty notes for the UI/README
+- Proving + packet + PoD signing run on a server service (stateless, no fund
+  custody); the wallet holds custody and authorizes all value movement. State this.
+- deliver/submit_flight are permissionless by design (I3) — the connected wallet
+  submits + pays; anyone could. Not a weakness.
