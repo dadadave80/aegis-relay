@@ -36,7 +36,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npm install
+      - uses: oven-sh/setup-bun@v2
+      # prover is a bun-workspace member (@ctd/sdk is `workspace:*`), which npm
+      # can't resolve — install with bun; the tests still run on Node via `npm test`.
+      - run: bun install
       - run: npm test
 
   dashboard:
