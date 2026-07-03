@@ -1,26 +1,202 @@
 @import "tailwindcss";
 
+/* ═══════════════════════════════════════════════════════════════════
+   AEGIS RELAY — "Two Worlds, One Seam" design system
+   Ported from the Aegis Relay Design System (claude.ai/design).
+   Temperature = visibility: warm ivory = private, cold cyan mono =
+   public/on-chain, ultraviolet = encryption. Dark only; the void is
+   the brand. Fonts wired to next/font (Archivo + IBM Plex Mono) in
+   layout.tsx via --font-archivo / --font-plex.
+   ═══════════════════════════════════════════════════════════════════ */
 :root {
-  --bg: #0A0B0D;
-  --surface: #14171A;
-  --border: rgba(255,255,255,0.10);
-  --text: #F5F7FA;
-  --text-dim: #A0A8B4;
-  --text-faint: #838B99; /* WCAG AA (~5.7:1 on --bg) */
-  --mint: #4EF0B5;
-  --on-mint: #062018; /* foreground on --mint surfaces (buttons) */
-  --amber: #F5B84E;
-  --red: #FF6B6B;
+  /* ── Void (surfaces) — cold blue-black, never pure #000 ──────── */
+  --void-0: #05060A;
+  --void-1: #0B0E16;
+  --void-2: #111624;
+  --hairline: rgba(151, 163, 199, 0.14); /* ALL borders — 1px, never 2 */
+
+  /* ── Private world ──────────────────────────────────────────── */
+  --ink: #E9E4D8;
+  --ink-dim: #A9A69B;
+  --panel-warm: rgba(18, 16, 13, 0.88);
+  --panel-cold: rgba(10, 17, 28, 0.88);
+
+  /* ── Public ledger — chain cyan is MONO ONLY, never UI chrome ── */
+  --chain: #7DDFF2;
+  --chain-dim: #5A93A3;
+
+  /* ── The seam (encryption) — owns every privacy affordance ───── */
+  --seal: #8B7CFF;
+  --seal-deep: #4A3DBD;
+
+  /* ── Semantic (scarce by design) ────────────────────────────── */
+  --verified: #3DF5A6; /* proof-verified states ONLY */
+  --caution: #F0B44C;  /* trust-anchor caveats */
+  --danger: #FF5C5C;   /* rejected proofs, expiry */
+
+  /* ── Type ───────────────────────────────────────────────────── */
+  --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex), ui-monospace, "SF Mono", monospace;
+  --display-stretch: 125%;
+
+  --text-xs: 12.5px;
+  --text-sm: 15px;
+  --text-md: 18px;
+  --text-lg: 21.6px;
+  --text-xl: 26px;
+  --text-2xl: 31px;
+
+  --mk-sm: 16px;
+  --mk-md: 21px;
+  --mk-lg: 28px;
+  --mk-xl: 38px;
+  --mk-2xl: 50px;
+  --mk-3xl: 67px;
+
+  --lh-body: 1.5;
+  --lh-display: 1.1;
+  --lh-mono: 1.4;
+  --stamp-tracking: 0.12em;
+
+  /* ── Space (4px grid) ───────────────────────────────────────── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-16: 64px;
+  --sp-28: 112px;
+
+  /* ── Radius — sharp, instrument-like ────────────────────────── */
+  --r-panel: 6px;
+  --r-control: 4px;
+  --r-pill: 999px;
+
+  /* ── Elevation — no drop shadows except popovers ────────────── */
+  --shadow-popover: 0 8px 32px rgba(0, 0, 0, 0.55);
+  --glow-seal: 0 0 24px rgba(139, 124, 255, 0.25);
+  --glow-verified: 0 0 24px rgba(61, 245, 166, 0.25);
+
+  /* ── Motion ─────────────────────────────────────────────────── */
+  --dur-micro: 120ms;
+  --dur-structural: 240ms;
+  --dur-lens: 180ms;
+  --dur-ceremony: 900ms;
+  --dur-seal-fold: 600ms;
+  --dur-shimmer: 8s;
+  --ease-micro: ease-out;
+  --ease-structural: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --focus-ring: var(--seal);
+
+  /* ── Compatibility bridge — legacy names → new tokens ─────────
+     Lets the existing components adopt the void palette + fonts +
+     sharp corners immediately, restyled properly page by page. The
+     old mint primary maps to --seal (privacy affordance = brand
+     accent per the brief); the old amber/red map to caution/danger. */
+  --bg: var(--void-0);
+  --surface: var(--void-1);
+  --surface-2: var(--void-2);
+  --border: var(--hairline);
+  --text: var(--ink);
+  --text-dim: var(--ink-dim);
+  --text-faint: var(--ink-dim);
+  --mint: var(--seal);
+  --on-mint: #0A0812; /* dark text on a seal button (≥6:1 on --seal) */
+  --amber: var(--caution);
+  --red: var(--danger);
 }
 
-html, body { background: var(--bg); color: var(--text); }
-body { font-family: var(--font-sans, ui-sans-serif, system-ui); }
+* { box-sizing: border-box; }
 
-.mono { font-family: var(--font-mono, ui-monospace, monospace); font-variant-numeric: tabular-nums; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 1rem; }
-.hairline { border-color: var(--border); }
+html, body { background: var(--void-0); color: var(--ink); }
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Data voice — every hash, coordinate, amount, ledger number ── */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-mono);
+}
+
+/* ── Display voice ──────────────────────────────────────────────── */
+.display {
+  font-family: var(--font-display);
+  font-stretch: var(--display-stretch);
+  font-weight: 600;
+  line-height: var(--lh-display);
+  letter-spacing: -0.01em;
+}
+
+/* ── STAMP — classification labels: SEALED · PUBLIC BY DESIGN ───── */
+.stamp {
+  font-family: var(--font-display);
+  font-stretch: var(--display-stretch);
+  font-weight: 600;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--stamp-tracking);
+}
+
+/* ── Annotation voice — amber honesty lines, kept verbatim ─────── */
+.honesty {
+  font-family: var(--font-mono);
+  font-style: italic;
+  font-size: var(--text-xs);
+  color: var(--caution);
+  line-height: var(--lh-mono);
+}
+
+/* ── Panels — elevation by border + 1-step lift, no shadows ────── */
+.panel {
+  background: var(--void-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-panel);
+}
+.panel-warm {
+  background: linear-gradient(var(--panel-warm), var(--panel-warm)), var(--void-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-panel);
+}
+.panel-cold {
+  background: linear-gradient(var(--panel-cold), var(--panel-cold)), var(--void-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-panel);
+}
+.hairline { border: 1px solid var(--hairline); }
+
+/* Legacy .card → sharpened panel (was a 16px soft SaaS corner). */
+.card {
+  background: var(--void-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-panel);
+}
+
+/* ── Focus — visible 2px seal ring on void ─────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 
 pre { overflow-x: auto; }
+
+/* ── Shared keyframes ──────────────────────────────────────────── */
+@keyframes aegis-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes aegis-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
