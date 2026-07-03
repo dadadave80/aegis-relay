@@ -6,7 +6,7 @@ import type {
   ShipmentView, ActionResult, BuildTxReq, BuildTxRes, SubmitTxReq, SubmitTxRes,
   VerifyRes, FlyInputRes, ProveInputRes, AuditRes, ShipmentReq, RoleInfo,
   Listing, MarketClaimResult, ClaimContext, PodSignReq,
-  CarrierStatus, CarrierStatusRes,
+  CarrierStatus, CarrierStatusRes, ReportReq, ReportRes,
 } from "./types";
 
 async function post<T>(path: string, body: unknown): Promise<ActionResult<T>> {
@@ -47,6 +47,7 @@ export const api = {
   deliverRecord:(shipmentId: number, proof: unknown, publicSignals: string[]) =>
                   post<{ ready: boolean }>("/api/prove-delivery", { shipmentId, proof, publicSignals }),
   audit:        (b: ShipmentReq)  => post<AuditRes>("/api/confidential/audit", b),
+  report:       (b: ReportReq)    => post<ReportRes>("/api/dispute/report", b),
   shipment:     (id: number)      => get<ShipmentView>(`/api/shipment/${id}`),
   roleInfo:     (address: string) => get<RoleInfo>(`/api/role?address=${encodeURIComponent(address)}`),
   // recipient claim link — GET signing context, POST the in-browser PoD signature

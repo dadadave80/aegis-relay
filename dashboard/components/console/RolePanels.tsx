@@ -12,7 +12,7 @@
  * disables while running, and renders failures inline (never crashes).
  */
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import type {
   AuditRes,
@@ -41,6 +41,7 @@ import {
 import { txLink, FALLBACK_CONTRACTS } from "./config";
 import { ProofCeremony } from "@/components/ds/ProofCeremony";
 import { proveGroth16 } from "@/lib/proving/groth16-browser";
+import { refundEligibility, fmtRemaining } from "@/lib/disputes";
 
 // ── shared helpers ───────────────────────────────────────────────────────────
 
@@ -151,6 +152,8 @@ function Result({ tone = "verified", children }: { tone?: "verified" | "caution"
 
 function MerchantPanel() {
   const {
+    currentShipmentId,
+    shipment,
     setCurrentShipmentId,
     setCreatedDest,
     applyView,
@@ -294,7 +297,137 @@ function MerchantPanel() {
           SIMULATED drone secure element — the proof binds a key, not physics.
         </Honesty>
       )}
+
+      {currentShipmentId !== null && shipment && (
+        <div
+          className="space-y-3"
+          style={{ borderTop: "1px solid var(--hairline)", paddingTop: 20 }}
+        >
+          <SectionLabel>Disputes — shipment #{currentShipmentId}</SectionLabel>
+          <MerchantDisputes shipmentId={currentShipmentId} view={shipment} />
+        </div>
+      )}
     </Panel>
+  );
+}
+
+// ── Merchant disputes (thin) ─────────────────────────────────────────────────
+
+function MerchantDisputes({ shipmentId, view }: { shipmentId: number; view: ShipmentView }) {
+  const { applyView, refreshShipment } = useSession();
+  const { stellarAddress } = useWallet();
+  const flows = useWalletFlows();
+  const { toast } = useToast();
+  const { runningKey, error, setError, run } = useRunner();
+  const [reason, setReason] = useState("");
+  const [reported, setReported] = useState(false);
+  const walletReady = !!stellarAddress;
+
+  // "now" is a tick, not a render-time Date.now() read (react-hooks/purity) —
+  // it also keeps the before-deadline countdown live without extra polling.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const t = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const elig = refundEligibility(view, nowSec);
+
+  const refund = () =>
+    run("refund", async () => {
+      const res = await flows.refund(shipmentId);
+      if (res.ok && res.data) {
+        if (res.data.view) applyView(res.data.view);
+        void refreshShipment();
+        toast({
+          title: "Escrow refunded",
+          detail: "deadline passed — remaining escrow returned to the merchant",
+        });
+      } else setError({ title: "Refund failed", detail: res.error ?? "Unknown error" });
+    });
+
+  const report = () =>
+    run("report", async () => {
+      const res = await api.report({ shipmentId, reason });
+      if (res.ok && res.data?.reported) {
+        setReported(true);
+        toast({ title: "Report filed", detail: `flagged shipment #${shipmentId} for review` });
+      } else setError({ title: "Report failed", detail: res.error ?? "Unknown error" });
+    });
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm" style={{ color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
+        If the deadline passes with no delivery, reclaim the escrowed payment. This
+        wraps the registry&apos;s <span className="mono">refund_expired</span> — the
+        remaining escrow always returns to the merchant.
+      </p>
+
+      {elig.kind === "eligible" && (
+        <>
+          {!walletReady && <NeedWallet />}
+          <ActionButton
+            variant="danger"
+            onClick={refund}
+            disabled={!walletReady}
+            loading={runningKey === "refund"}
+            loadingLabel="Signing refund…"
+            className="w-full sm:w-auto"
+          >
+            Refund (deadline passed)
+          </ActionButton>
+        </>
+      )}
+      {elig.kind === "before-deadline" && (
+        <Notice>
+          Deadline in <span className="mono">{fmtRemaining(elig.secondsRemaining)}</span>.
+          The refund unlocks only after it passes — the registry rejects an early
+          call (<span className="mono">DeadlineNotPassed</span>).
+        </Notice>
+      )}
+      {elig.kind === "already-expired" && (
+        <Result tone="caution">
+          Already expired — the remaining escrow has been returned to the merchant.
+        </Result>
+      )}
+      {elig.kind === "not-refundable" && (
+        <Notice>
+          {view.state === "DELIVERED"
+            ? "Delivered and settled — there is nothing to refund."
+            : "This shipment is not in a refundable state."}
+        </Notice>
+      )}
+
+      <div className="space-y-2" style={{ borderTop: "1px solid var(--hairline)", paddingTop: 16 }}>
+        <Field
+          label="Report an issue"
+          hint="sets a thin-dispute flag on ship:<id> — deep arbitration is a follow-on"
+        >
+          <TextInput
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. package never arrived"
+          />
+        </Field>
+        <ActionButton
+          variant="ghost"
+          onClick={report}
+          disabled={!reason.trim() || reported}
+          loading={runningKey === "report"}
+          loadingLabel="Filing report…"
+        >
+          {reported ? "Reported ✓" : "Report shipment"}
+        </ActionButton>
+        {reported && (
+          <Result>
+            ✓ Report filed against shipment #{shipmentId} — a reviewer can read the
+            flag from the mailbox.
+          </Result>
+        )}
+      </div>
+
+      {error && <InlineError title={error.title} detail={error.detail} />}
+    </div>
   );
 }
 

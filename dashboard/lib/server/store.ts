@@ -59,6 +59,12 @@ export interface ShipMeta {
   escrowDeadline: string;
 }
 
+/** Thin-dispute flag written to ship:<id> (§8 disputes). Never a Stellar tx. */
+export interface ShipReport {
+  reason: string;
+  at: number; // Date.now() when filed
+}
+
 export interface ShipRecord {
   shipmentId: string;
   packet: Packet;
@@ -75,6 +81,8 @@ export interface ShipRecord {
   flightTx?: string;
   deliverTx?: string;
   settleTx?: string;
+  /** Thin-dispute report flag (§8). Set by reportShipFlow; never on-chain. */
+  report?: ShipReport;
 }
 
 /** A prepared-but-unsigned transaction awaiting the wallet's signature. */

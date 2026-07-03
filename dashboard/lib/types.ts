@@ -233,3 +233,9 @@ export interface PodSignReq {
 export type MarketClaimResult =
   | ({ credentialed: true } & MarketClaimRes)
   | { credentialed: false; onboard: { title: string; cta: string; href: string } };
+
+// ── Thin disputes (Task 10): refund-on-expiry action + report flag ─────────
+
+/** POST /api/dispute/report — file a thin-dispute flag on ship:<id> (§8). */
+export interface ReportReq { shipmentId: number; reason: string; }
+export interface ReportRes { reported: boolean; at: number; }

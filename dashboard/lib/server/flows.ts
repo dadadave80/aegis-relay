@@ -788,6 +788,23 @@ export async function recordSettleFlow(shipmentId: number, settleTx: string): Pr
   return { recorded: updated !== undefined };
 }
 
+// ── thin disputes — report flag on ship:<id> (§8) ────────────────────────────
+
+/** Set a lightweight report flag on the shipment's mailbox record. No on-chain
+ *  effect — deep arbitration is a follow-on spec. Requires an existing record. */
+export async function reportShipFlow(
+  id: number,
+  reason: string,
+): Promise<{ reported: boolean; at: number }> {
+  const rec = await store.getShip(id);
+  if (!rec) throw new Error(`no stored record for shipment ${id}`);
+  const trimmed = (reason ?? "").trim().slice(0, 500);
+  if (!trimmed) throw new Error("a report reason is required");
+  const at = Date.now();
+  await store.updateShip(id, { report: { reason: trimmed, at } });
+  return { reported: true, at };
+}
+
 // ── market board (Task 5) ─────────────────────────────────────────────────────
 
 /**
