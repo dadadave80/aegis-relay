@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Session context for the interactive demo console.
+ * Session context for the console.
  *
  * With the console now non-custodial (the connected Privy Stellar wallet signs
  * every on-chain action — see lib/wallet-context.tsx), this context no longer
@@ -63,6 +63,7 @@ export function useSession(): SessionContextValue {
 const SHIPMENT_KEY = "aegis-demo-shipment";
 const ROLE_KEY = "aegis-demo-role";
 const destKey = (id: number) => `aegis-demo-dest-${id}`;
+const VALID_ROLES: readonly Role[] = ["merchant", "carrier", "recipient", "auditor"];
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [role, setRoleState] = useState<Role>("merchant");
@@ -78,8 +79,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     try {
-      const r = window.localStorage.getItem(ROLE_KEY) as Role | null;
-      if (r) setRoleState(r);
+      const r = window.localStorage.getItem(ROLE_KEY);
+      if (r && (VALID_ROLES as readonly string[]).includes(r)) setRoleState(r as Role);
       const sid = window.localStorage.getItem(SHIPMENT_KEY);
       if (sid && /^\d+$/.test(sid)) setShipmentIdState(Number(sid));
     } catch {

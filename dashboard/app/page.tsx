@@ -48,10 +48,10 @@ export default async function Home() {
         </p>
       </div>
 
-      {/* Primary CTA — the interactive demo console */}
+      {/* Primary CTA — the app */}
       <div className="max-w-2xl mx-auto mb-12">
         <Link
-          href="/demo"
+          href="/console"
           className="group card block p-6 sm:p-7 transition-[transform,border-color] hover:-translate-y-0.5"
           style={{ borderColor: "color-mix(in srgb, var(--mint) 40%, transparent)" }}
         >
@@ -66,21 +66,21 @@ export default async function Home() {
                   style={{ background: "var(--mint)" }}
                   aria-hidden
                 />
-                Interactive demo console
+                The app
               </p>
               <p className="text-lg sm:text-xl font-semibold tracking-tight">
                 Drive the whole lifecycle yourself
               </p>
               <p className="text-sm mt-1 leading-relaxed" style={{ color: "var(--text-dim)" }}>
-                Log in, switch between merchant, carrier, recipient, auditor and
-                attacker, and watch every proof settle live on testnet.
+                Connect your wallet, act as merchant, carrier, recipient or
+                auditor, and watch every proof settle live on testnet.
               </p>
             </div>
             <span
               className="shrink-0 inline-flex items-center gap-2 rounded-lg px-5 py-3 text-sm font-semibold transition-transform group-hover:translate-x-0.5"
               style={{ background: "var(--mint)", color: "var(--on-mint)" }}
             >
-              Launch demo console →
+              Open the app →
             </span>
           </div>
         </Link>

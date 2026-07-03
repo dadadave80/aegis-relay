@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Small, shared building blocks for the demo console — spinners, action
+ * Small, shared building blocks for the console — spinners, action
  * buttons with loading/step labels, inline error cards, form fields and a
  * segmented control. All styling matches the existing dark / mint system in
  * app/globals.css (Tailwind for layout, CSS vars for colour).

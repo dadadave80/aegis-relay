@@ -17,21 +17,18 @@ import {
   verifyPacket,
   sampleFieldSalt,
 } from "./prover-dist/carrier.js";
-import { deriveRecipientKey, signPod, type Pod } from "./prover-dist/recipient.js";
+import { signPod, type Pod } from "./prover-dist/recipient.js";
 import { pkCommit } from "./prover-dist/lib/poseidon.js";
 import { latLonToQ } from "./prover-dist/lib/tree.js";
 import {
   buildFlightScenario,
   deriveDroneKey,
-  applyAttack,
 } from "./prover-dist/lib/flight.js";
-import { poseidonHash } from "./prover-dist/lib/poseidon.js";
 import type { SnarkjsProof } from "./prover-dist/lib/bn254.js";
 
 import {
   buildInvoke,
   submitSignedXdr,
-  simulateInvoke,
   readShipmentRaw,
   scU64,
   scU32,
@@ -68,8 +65,6 @@ import type {
   VerifyRes,
   FlyRes,
   AuditRes,
-  AttackKind,
-  AttackRes,
 } from "../types";
 
 // ── response envelope (matches lib/types.ts ActionResult) ────────────────────
@@ -471,173 +466,4 @@ export async function auditFlow(): Promise<AuditRes> {
       "registry amount=0; settle tx 2d990d64577a95af182aec1e1032a9f96c9cf965ad7714ac9cc8e737b93f9aa3). " +
       "A fresh confidential lifecycle is not wired into the wallet flow this pass.",
   };
-}
-
-// ── attacks (real rejections captured verbatim) ──────────────────────────────
-
-function contractErrDetail(sim: { ok: boolean; error?: string }): string {
-  return (sim.error ?? "unknown simulation error").split("\n").slice(0, 3).join(" ").trim();
-}
-
-export async function attackFlow(id: number, kind: AttackKind): Promise<AttackRes> {
-  switch (kind) {
-    case "tamper":
-      return attackDeliverProof(id, "tamper");
-    case "wrongproof":
-      return attackDeliverProof(id, "wrongproof");
-    case "replay":
-      return attackReplay(id);
-    case "stray":
-      return attackStray(id);
-    case "premature":
-      return attackPremature();
-    default:
-      throw new Error(`unknown attack kind: ${kind}`);
-  }
-}
-
-async function attackDeliverProof(id: number, mode: "tamper" | "wrongproof"): Promise<AttackRes> {
-  let rec = store.getShip(id);
-  if (!rec) throw new Error(`no stored shipment ${id}`);
-  // Self-prepare: if the shipment has no delivery proof yet, generate a genuine
-  // one (sign PoD at the committed dest, then prove) so the attack is
-  // demonstrable regardless of demo ordering. Requires the shipment be accepted.
-  if (!rec.deliveryProof) {
-    if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted yet — accept it first`);
-    await signPodFlow(id, rec.meta.toLat, rec.meta.toLon);
-    await proveDeliveryFlow(id);
-    rec = store.getShip(id)!;
-  }
-  const pub = rec.deliveryProof!.publicSignals; // [id, c_s, head, nullifier, ts]
-  const p = rec.deliveryProof!.proof;
-
-  let proofScVal;
-  if (mode === "tamper") {
-    proofScVal = tamperProofScVal(p);
-  } else {
-    // valid G1 points, wrong proof: swap A and C.
-    const swapped: SnarkjsProof = { pi_a: p.pi_c, pi_b: p.pi_b, pi_c: p.pi_a };
-    proofScVal = scProof(swapped);
-  }
-  const args = [scU64(id), proofScVal, scU256(pub[3]), scU64(pub[4])];
-  const sim = await simulateInvoke("deliver", undefined, args);
-  return {
-    rejected: !sim.ok,
-    where: "registry.deliver → Groth16 verify (CAP-0074 pairing check)",
-    detail: contractErrDetail(sim),
-  };
-}
-
-async function attackReplay(id: number): Promise<AttackRes> {
-  // Use another shipment's delivery proof against THIS shipment. Public signals
-  // are rebuilt from THIS shipment's storage (different id/C_S/head) → the
-  // foreign proof cannot verify.
-  const foreign = store
-    .listShipIds()
-    .map((sid) => store.getShip(sid))
-    .find((r) => r && String(r.shipmentId) !== String(id) && r.deliveryProof);
-  if (!foreign?.deliveryProof) {
-    throw new Error("replay needs a second shipment with a delivery proof in the mailbox");
-  }
-  const fp = foreign.deliveryProof;
-  const args = [
-    scU64(id),
-    scProof(fp.proof),
-    scU256(fp.publicSignals[3]),
-    scU64(fp.publicSignals[4]),
-  ];
-  const sim = await simulateInvoke("deliver", undefined, args);
-  return {
-    rejected: !sim.ok,
-    where: `registry.deliver — replayed shipment #${foreign.shipmentId} proof onto #${id}`,
-    detail: contractErrDetail(sim),
-  };
-}
-
-async function attackStray(id: number): Promise<AttackRes> {
-  // Self-contained honest drone flight, then move waypoint 8 off-corridor: the
-  // circuit's corridor-membership constraint makes the witness ungenerable.
-  const rec = store.getShip(id);
-  const seed = crypto.randomBytes(32).toString("hex");
-  const foreign = Buffer.from(seed, "hex");
-  foreign[0] ^= 0xff;
-  const droneKey = await deriveDroneKey(seed, sampleFieldSalt());
-
-  const rk = await deriveRecipientKey(crypto.randomBytes(32).toString("hex"));
-  const opening = rec
-    ? {
-        skuHash: rec.packet.cs_opening.sku_hash,
-        qty: rec.packet.cs_opening.qty,
-        weightG: rec.packet.cs_opening.weight_g,
-        valueUnits: rec.packet.cs_opening.value_units,
-        recipientPkX: rec.packet.cs_opening.recipient_pk_x,
-        recipientPkY: rec.packet.cs_opening.recipient_pk_y,
-        method: "3",
-        deadlineTs: rec.packet.cs_opening.deadline_ts,
-        shipmentSecret: rec.packet.cs_opening.shipment_secret,
-      }
-    : {
-        skuHash: await poseidonHash([777n]),
-        qty: "1",
-        weightG: "1000",
-        valueUnits: "1000000",
-        recipientPkX: rk.pkX,
-        recipientPkY: rk.pkY,
-        method: "3",
-        deadlineTs: String(Math.floor(Date.now() / 1000) + 3600),
-        shipmentSecret: sampleFieldSalt(),
-      };
-
-  const scenario = await buildFlightScenario({
-    shipmentId: id || 999,
-    opening,
-    from: { lat: 37.0, lon: -122.0 },
-    to: { lat: 37.003, lon: -122.0 },
-    droneKey,
-    laneId: 7,
-    t0: BigInt(Math.floor(Date.now() / 1000)),
-    dt: 20n,
-    altDm: 800n,
-  });
-
-  const witness = await applyAttack("stray", {
-    scenario,
-    droneSeedHex: seed,
-    foreignSeedHex: foreign.toString("hex"),
-  });
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { groth16 } = (await import("snarkjs")) as any;
-    await groth16.fullProve(witness, FLIGHT_WASM, FLIGHT_ZKEY);
-    return { rejected: false, where: "flight circuit", detail: "UNEXPECTED: stray flight produced a proof" };
-  } catch (e) {
-    return {
-      rejected: true,
-      where: "A2 flight circuit — corridor membership (witness generation)",
-      detail: String(e instanceof Error ? e.message : e).split("\n")[0],
-    };
-  }
-}
-
-function attackPremature(): AttackRes {
-  return {
-    rejected: true,
-    where: "AegisEscrowHooks on the CT token — premature confidential settle",
-    detail:
-      "Error(Contract, #4302) — settle before DELIVERED rejected by the escrow hook " +
-      "(recorded CT-A lifecycle, docs/testnet.md; confidential rail not freshly wired this pass).",
-  };
-}
-
-// tamper: flip one byte of the encoded G1 point A → invalid/incorrect proof.
-function tamperProofScVal(p: SnarkjsProof) {
-  // Re-encode via scProof after nudging the last decimal digit of pi_a[0].
-  const a0 = BigInt(p.pi_a[0]);
-  const tampered: SnarkjsProof = {
-    pi_a: [(a0 ^ 1n).toString(), p.pi_a[1], p.pi_a[2] ?? "1"],
-    pi_b: p.pi_b,
-    pi_c: p.pi_c,
-  };
-  return scProof(tampered);
 }

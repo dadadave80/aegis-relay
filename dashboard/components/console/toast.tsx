@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Minimal toast system for the demo console. No dependencies — a context, a
+ * Minimal toast system for the console. No dependencies — a context, a
  * fixed stack in the corner, auto-dismiss. Used for "shipment created" and
  * other one-shot confirmations that shouldn't steal focus.
  */

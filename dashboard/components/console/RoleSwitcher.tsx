@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Prominent role switcher — the founder flips Merchant → Carrier → Recipient →
- * Auditor → Attacker freely, one session driving every role. Switching is
- * instant; a one-line hint says who you're now acting as.
+ * Prominent role switcher — flip Merchant → Carrier → Recipient → Auditor, one
+ * session driving every role. Switching is gated (the role-selection gate lands
+ * in a later pass); a one-line hint says who you're now acting as.
  */
 
 import { useSession } from "@/lib/session-context";
@@ -24,8 +24,7 @@ export default function RoleSwitcher() {
       >
         {ROLES.map((r) => {
           const active = r.role === role;
-          const isAttacker = r.role === "attacker";
-          const accent = isAttacker ? "var(--red)" : "var(--mint)";
+          const accent = "var(--mint)";
           return (
             <button
               key={r.role}
@@ -37,7 +36,7 @@ export default function RoleSwitcher() {
                 active
                   ? {
                       background: accent,
-                      color: isAttacker ? "#1A0808" : "var(--on-mint)",
+                      color: "var(--on-mint)",
                     }
                   : { background: "transparent", color: "var(--text-dim)" }
               }
@@ -58,9 +57,7 @@ export default function RoleSwitcher() {
         You are now acting as{" "}
         <span
           className="font-semibold"
-          style={{
-            color: role === "attacker" ? "var(--red)" : "var(--mint)",
-          }}
+          style={{ color: "var(--mint)" }}
         >
           {meta.label}
         </span>{" "}

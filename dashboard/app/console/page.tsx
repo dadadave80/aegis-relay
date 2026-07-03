@@ -2,8 +2,8 @@
 
 import { WalletProvider } from "@/lib/wallet-context";
 import { SessionProvider } from "@/lib/session-context";
-import { ToastProvider } from "@/components/demo/toast";
-import Console from "@/components/demo/Console";
+import { ToastProvider } from "@/components/console/toast";
+import Console from "@/components/console/Console";
 
 // Scoped enter animation for the console. The global prefers-reduced-motion
 // rule in app/globals.css neutralises it for users who opt out.
@@ -15,7 +15,7 @@ const CONSOLE_CSS = `
 .demo-fade-up { animation: demoFadeUp 0.4s cubic-bezier(0.2, 0, 0, 1) both; }
 `;
 
-export default function DemoPage() {
+export default function ConsolePage() {
   return (
     <WalletProvider>
       <SessionProvider>
