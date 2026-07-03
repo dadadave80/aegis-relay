@@ -34,48 +34,66 @@ token), settled to the carrier after delivery, with the regulator able to decryp
 the amount. It's the headline privacy feature (`DESIGN.md §6.6`) and the only
 part of the pitch not live in the app.
 
-## The one design decision this plan makes (read before touching code)
+## The design (client-side, wallet-driven — mirrors the upstream demo)
 
-Recon established two hard facts:
-1. **`@ctd/sdk` signs via an external `Signer` callback** (`ChainClient` takes no
-   secret; each op takes `Signer { publicKey, sign(txXdrBase64) }` — the SDK's
-   own docs say "the web app wraps Freighter's `signTransaction`"). So the Stellar
-   envelope of a confidential tx CAN be signed by the connected wallet.
-2. **BUT every confidential op needs a locally-held Grumpkin private key** to build
-   its UltraHonk proof (`buildTransferWitness({keys, …})` needs the sender's `sk`).
-   A browser wallet cannot supply that. There is a confidential identity separate
-   from the Stellar key.
+The upstream `brozorec/stellar-confidential-token-demo` **web app** (cloned at
+`/Users/dadadave/Dev/Stellar/ct-demo/packages/app`) proves the confidential rail
+runs fully client-side with a browser wallet, and ships the exact helpers to port.
+Two facts (verified in that source) drive the design:
 
-Therefore the confidential rail **cannot be purely wallet-signed** the way the
-transparent rail is. This plan's decision, consistent with the app's existing
-server-orchestrated architecture (all Groth16 proving + PoD signing already run
-server-side) and with the deployed CT-A design:
+1. **The Grumpkin confidential key is DERIVED deterministically from a wallet
+   *message* signature — never stored, never server-held.**
+   `packages/app/lib/derive-key.ts`: `sk = SHA-512(wallet.signMessage(msg)) mod r`,
+   where `msg = keyDerivationMessage(networkPassphrase, tokenContract)`. Ed25519
+   signatures are deterministic (RFC 8032), so the same account always derives the
+   same key — stable across devices, survives localStorage loss. The message binds
+   the network + token id (so a signature for one deployment can't derive keys for
+   another). This is the piece the earlier (rejected) server-managed design missed.
+2. **`@ctd/sdk` signs Stellar txs via an external `Signer`** (`{publicKey,
+   sign(txXdrBase64)}`), and **UltraHonk proofs are generated in the browser** via
+   bb.js. `packages/app/lib/freighter.ts` adapts Freighter to `Signer` +
+   `signMessage`; `packages/app/lib/bb-loader.ts` + `packages/app/next.config.mjs`
+   set up browser bb.js (vendored to `public/vendor/bb/`, COOP=same-origin +
+   COEP=credentialless for SharedArrayBuffer, `transpilePackages:["@ctd/sdk"]`).
 
-- **The connected wallet remains the merchant of record on the REGISTRY** — it
-  signs `create_shipment(rail=Confidential, escrow=E, amount=0)` through the
-  existing wallet two-step (`buildTx`→wallet `signTransaction`→`submitTx`). That is
-  the user's authority.
-- **The CONFIDENTIAL funding runs SERVER-SIDE** via `@ctd/sdk` with **server-managed
-  keys**: a per-deployment "confidential funder" account (Stellar keypair +
-  Grumpkin key) that registers + holds a public float, and a **per-shipment escrow
-  account `E`** (fresh Stellar keypair + Grumpkin key). This is safe by the CT-A
-  cage: `E`'s keys are a *capability*, not spending authority — the token's hooks
-  cross-call `registry.release_allowed(id, to)` and reject any movement the state
-  machine doesn't allow (`EscrowReleaseNotAllowed = 4302`). The server holding
-  `E`'s key cannot steal the escrow.
-- **Honest caveat (goes in the README):** the confidential *funder* is a
-  server-managed demo account, so the hidden amount is a demo float, not the
-  connected wallet's own confidential balance; and the server holds Grumpkin
-  viewing keys (it can decrypt those balances). A production version would put the
-  merchant's Grumpkin key in the wallet/PWA and prove client-side. The amount is
-  genuinely hidden on-chain either way.
+**Committed design — client-side, driven by the connected Stellar Wallets Kit wallet:**
 
-If you (the executor) find a clean way to run `@ctd/sdk` **client-side** with the
-wallet as `Signer` and a browser-held Grumpkin key (the SDK's stated web design),
-that is strictly better — but it requires bb.js UltraHonk proving in the browser
-(cross-origin isolation, a large wasm) and `@ctd/sdk` in the client bundle. Treat
-that as out of scope for this plan unless it proves easy; the server design above
-is the committed path.
+- **The merchant's confidential identity is derived from the connected wallet's
+  `signMessage`** (Stellar Wallets Kit exposes `signMessage` — the same static API
+  as `signTransaction`). No server holds the merchant's confidential key; the hidden
+  balance is genuinely the user's.
+- **Confidential ops (`register`/`deposit`/`merge`/`confidential_transfer merchant→E`)
+  run in the BROWSER** via `@ctd/sdk`: `Signer` = a Stellar-Wallets-Kit adapter
+  (`kit.signTransaction` for the envelope, `kit.signMessage` for key derivation),
+  UltraHonk proofs via browser bb.js. Ports `packages/app/lib/{derive-key,freighter,
+  bb-loader}.ts` (adapt `freighter.ts` → a kit adapter) + the `next.config.mjs`
+  cross-origin-isolation/webpack setup.
+- **The registry `create_shipment(rail=Confidential, escrow=E, amount=0)`** is the
+  existing wallet two-step (server builds → wallet signs → server submits), source =
+  the connected wallet. Unchanged.
+- **The escrow account `E` stays app-managed (client-generated per shipment) —
+  it is NOT the user's wallet.** `E` gets a fresh Stellar keypair + a Grumpkin key
+  (a random scalar, or derived from `E`'s own Stellar key); its keys travel in the
+  shipment packet/mailbox. Holding `E`'s key is a *capability*, not spending
+  authority — the token hooks cross-call `registry.release_allowed(id, to)` and
+  reject any move the state machine disallows (`EscrowReleaseNotAllowed = 4302`).
+  Client-hold `E`'s key in the packet (like the CLI's `escrow.json`); the settle
+  (`E → payout`) is a browser-signed confidential_transfer admitted by the hook
+  after Delivered.
+- **Wallet constraint (state it in the UI + README):** the derive-key trick needs a
+  DETERMINISTIC ed25519 `signMessage`, which **Freighter** guarantees. Other kit
+  wallets (Albedo/xBull/Lobstr/Hana/Rabet) may not sign deterministically or may not
+  support `signMessage` — so the confidential rail requires Freighter (gate it: if
+  the connected wallet isn't Freighter, disable the confidential rail with a note).
+  The transparent + drone rails still work with any wallet.
+
+This is heavier on the CLIENT (browser bb.js, COOP/COEP, `@ctd/sdk` in the client
+bundle) but needs NO server-held confidential keys and makes the hidden amount the
+user's own. If browser bb.js proving proves intractable in the dashboard's Next
+build within the budget, the documented fallback (a server-side proving path with a
+per-session derived key) is a reviewer decision — but the client-side path is the
+committed target because the upstream demo has already solved every sub-problem and
+ships the code.
 
 ## Current state
 
