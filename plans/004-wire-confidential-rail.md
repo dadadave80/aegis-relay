@@ -270,6 +270,21 @@ derived from the wallet's `signMessage` sent to the server for that request only
 — a design change the reviewer must approve, not an improvisation. Do not proceed
 to Phase A/B/C/D until this spike is green (or the fallback is chosen).
 
+> **RESULT (commit `4286ce5`): GREEN — client-side browser proving, no fallback.**
+> A real UltraHonk `register` proof generated in the browser from the dashboard's
+> own build: 14592 bytes in 3.4s, `crossOriginIsolated=true`, no bb.js/worker/wasm
+> errors. **Bundler decision: webpack, not Turbopack.** Turbopack cannot follow
+> bun's `file:` symlink layout for `@ctd/sdk` (rejects symlinks whose realpath
+> escapes the root; even with a widened root it refuses the symlinked package.json:
+> "a redirect can't be parsed as json"). The upstream ct-demo ships a proven
+> webpack config for the identical stack, so `dashboard` now builds with
+> `next build --webpack` + `experimental.externalDir` + the demo's bb.js webpack
+> block + COOP/COEP headers + `transpilePackages:["@ctd/sdk"]`. bb.js is vendored
+> to `public/vendor/bb` and loaded as native ESM. **This means Phase A builds the
+> CLIENT-side confidential module (not the server `confidential.ts`); the
+> server-side text below is superseded except for the audit-decrypt read, which
+> may stay server-side.**
+
 ### Phase A — Confidential client module (browser `@ctd/sdk`, wallet-driven)
 
 **Design: client-side (see "The design" section).** Port the demo's client
