@@ -15,12 +15,36 @@ files that get committed. Fresh keys per role (privacy posture, DESIGN §13).
 Native XLM SAC (escrow token, transparent rail + CT underlying):
 `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`
 
-## Final deployment (2026-07-02/03) — CURRENT
+## Role-binding redeploy (2026-07-03) — CURRENT
+
+The registry was redeployed with **on-chain role binding** (advisor plan 001):
+`create_shipment`/`accept` bind the caller to Merchant/Carrier and reject a
+conflicting role while the wallet has an active shipment (`WrongRole = 23`);
+terminal states free the wallet; new entrypoints `set_role`, `role_of`,
+`active_count` (`RoleLocked = 24`). The registry has no upgrade path (VKs
+immutable, I6), so this is a **fresh registry instance reusing the existing
+airspace + credentials** contracts (unchanged). Deployed with `stellar contract
+deploy` (source `relay-admin`, VKs A1+A2 from `circuits/fixtures/*`, via the
+Alchemy RPC). Smoke-verified: `role_of(admin)` → null, `active_count(admin)` → 0.
+
+| Contract | ID |
+|---|---|
+| **aegis-registry (role binding + confidential rail)** | **`CAROLAUWCNZGSLSAISY5OVY5GZDZ6ULPBAO3U4FKTU3OIAOVPO6ZKPZL`** |
+| aegis-credentials (reused, epoch 1 root = PAD) | `CBEDJCSBU3IKHW34HAZPL55CFJ5AZOTBJUGFXR5TS5JMRJN7W37K4FQF` |
+| aegis-airspace (reused, lane 7 approved, valid ~2026-08-01) | `CCOEGSF3BSLXYKZMMX2OCSOJONAGORRWSI33TIUX3EHPVVHNMVHNENOY` |
+
+Wired into `dashboard/{lib/contract.ts, lib/server/artifacts.ts,
+components/console/config.ts}` and `docs/SUBMISSION.md`. Confidential-rail note:
+the hooked CT token below is still pinned to the PREVIOUS registry, so a fresh
+live confidential lifecycle would need a re-pinned token — the confidential
+compliance beat (auditor decrypt of the already-proven settlement) is unaffected.
+
+## Previous deployment (2026-07-02/03) — superseded by the role-binding redeploy
 
 Deployed by `prover/scripts/deploy-all.mjs` (source `relay-admin`, network
-`proxied`) at ledger 3398061. This is the P4/CT-A system: the registry gained
-the confidential rail (escrow map, `release_allowed`, `set_ct_token`) and the
-CT stack is the Aegis fork of the OpenZeppelin confidential token with
+`proxied`) at ledger 3398061. The P4/CT-A system: the registry gained the
+confidential rail (escrow map, `release_allowed`, `set_ct_token`) and the CT
+stack is the Aegis fork of the OpenZeppelin confidential token with
 `AegisEscrowHooks` (hook errors 4301–4305).
 
 | Contract | ID |

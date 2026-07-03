@@ -37,7 +37,7 @@ Each proof is verified by a Groth16 verifier assembled from Stellar's native BN2
 - **Drone lifecycle** — 16-waypoint flight compressed to one Groth16 proof, verified on-chain against a regulator-published corridor root; delivered; escrow released.
 - **Three distinct on-chain attack rejections** — replayed proof, tampered proof, and valid-points/wrong-proof each fail at the contract. Eight further attack modes can't even produce a proof.
 
-Registry: `CC4HXXHUE6ZCIVVN4XAHPV4JMYHEWK7ZIKILQMG5WCJ4V67NWLFTVGCA`
+Registry: `CAROLAUWCNZGSLSAISY5OVY5GZDZ6ULPBAO3U4FKTU3OIAOVPO6ZKPZL`
 (all contract IDs + tx hashes in the repo README / docs/testnet.md)
 
 ## Tech
@@ -46,7 +46,7 @@ Circom 2.2.3 + snarkjs · Groth16 / BN254 · circomlib Poseidon + EdDSA-Poseidon
 ## Links
 - GitHub (open source): https://github.com/dadadave80/aegis-relay
 - Provenance (v1 donor): https://github.com/dadadave80/aegis-zk-proof-of-reserves
-- Testnet registry: https://stellar.expert/explorer/testnet/contract/CC4HXXHUE6ZCIVVN4XAHPV4JMYHEWK7ZIKILQMG5WCJ4V67NWLFTVGCA
+- Testnet registry: https://stellar.expert/explorer/testnet/contract/CAROLAUWCNZGSLSAISY5OVY5GZDZ6ULPBAO3U4FKTU3OIAOVPO6ZKPZL
 - Demo video: <PASTE AFTER RECORDING — script in docs/demo-script.md>
 
 ## Honest limitations (we lead with these)
