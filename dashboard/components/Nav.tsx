@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Mark from "@/components/ds/Mark";
 
 const links = [
   { href: "/", label: "Overview" },
@@ -13,7 +14,8 @@ export default function Nav() {
   return (
     <header className="border-b hairline">
       <nav className="max-w-6xl mx-auto flex items-center gap-6 px-6 h-14">
-        <Link href="/" className="display flex items-center" style={{ fontSize: "var(--text-md)", fontWeight: 700 }}>
+        <Link href="/" className="display flex items-center" style={{ fontSize: "var(--text-md)", fontWeight: 700, gap: 8 }}>
+          <Mark size={24} />
           AEGIS<span style={{ color: "var(--seal)" }}>&nbsp;RELAY</span>
         </Link>
         <div className="flex gap-5" style={{ fontSize: "var(--text-sm)", color: "var(--ink-dim)" }}>

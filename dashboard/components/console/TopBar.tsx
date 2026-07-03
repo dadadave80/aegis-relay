@@ -13,6 +13,7 @@ import { useSession } from "@/lib/session-context";
 import { Stamp } from "@/components/ds/Stamp";
 import { ChainDatum } from "@/components/ds/ChainDatum";
 import { Spinner } from "@/components/ds/Button";
+import Mark from "@/components/ds/Mark";
 import { FALLBACK_CONTRACTS, accountLink, contractLink } from "./config";
 
 function LensToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
@@ -74,8 +75,9 @@ export default function TopBar() {
     <div className="panel" style={{ overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", padding: "12px 18px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-          <span className="display" style={{ fontSize: "var(--text-md)", fontWeight: 700 }}>
-            AEGIS<span style={{ color: "var(--seal)" }}>&nbsp;RELAY</span>
+          <span className="display" style={{ display: "inline-flex", alignItems: "center", gap: 9, fontSize: "var(--text-md)", fontWeight: 700 }}>
+            <Mark size={26} />
+            <span>AEGIS<span style={{ color: "var(--seal)" }}>&nbsp;RELAY</span></span>
           </span>
           <span className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "var(--text-xs)", color: "var(--chain-dim)" }}>
             <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--verified)", display: "inline-block" }} />
