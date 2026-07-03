@@ -8,7 +8,7 @@ import { Stamp } from "@/components/ds/Stamp";
 import { ChainDatum } from "@/components/ds/ChainDatum";
 import { Honesty } from "@/components/ds/Honesty";
 import { api } from "@/lib/api";
-import { useWallet } from "@/lib/wallet-context";
+import { WalletProvider, useWallet } from "@/lib/wallet-context";
 import type { ClaimChallengeRes } from "@/lib/types";
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -57,7 +57,7 @@ function shortAddr(a: string): string {
   return a.length > 14 ? `${a.slice(0, 6)}…${a.slice(-6)}` : a;
 }
 
-export default function ClaimPage() {
+function ClaimInner() {
   const params = useParams<{ id: string | string[] }>();
   const rawId = Array.isArray(params.id) ? params.id[0] : params.id;
   const id = Number(rawId);
@@ -265,5 +265,16 @@ export default function ClaimPage() {
         </Honesty>
       </Card>
     </Shell>
+  );
+}
+
+// Wallet context is mounted per-page (not global), like /market — the recipient
+// connects the designated wallet here to sign. Without this provider, useWallet()
+// returns the no-op FALLBACK: "Connect wallet" shows but clicking does nothing.
+export default function ClaimPage() {
+  return (
+    <WalletProvider>
+      <ClaimInner />
+    </WalletProvider>
   );
 }
