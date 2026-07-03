@@ -473,6 +473,20 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
 
   await store.delPending(req.buildId);
   const view = shipmentId !== undefined ? await shipmentView(shipmentId) : undefined;
+
+  // Reputation sync on terminal transitions (Task 9). A DELIVERED settle credits
+  // the payout carrier; an EXPIRED refund debits the carrier that accepted but let
+  // the deadline pass. A never-accepted shipment that expires has no payout → no-op.
+  // Gated on the freshly-read on-chain state so a bump only lands when the transition
+  // actually occurred (the tx submitted above).
+  if (view?.payout) {
+    if (pend.action === "deliver" && view.state === "DELIVERED") {
+      await store.bumpRep(view.payout, "delivered");
+    } else if (pend.action === "refund" && view.state === "EXPIRED") {
+      await store.bumpRep(view.payout, "expired");
+    }
+  }
+
   return { tx: res.hash, shipmentId, view, claimLink };
 }
 

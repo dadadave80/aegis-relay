@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { Stamp, type StampTone } from "@/components/ds/Stamp";
 import { Button } from "@/components/ds/Button";
 import { Segmented } from "@/components/ds/Segmented";
+import { CarrierRep } from "@/components/market/CarrierRep";
 import { ToastProvider, useToast } from "@/components/console/toast";
 import { WalletProvider, useWallet } from "@/lib/wallet-context";
 import { api } from "@/lib/api";
@@ -239,6 +240,12 @@ function MarketBoard() {
               Connect wallet
             </Button>
           )}
+          {stellarAddress && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <span className="honesty" style={{ color: "var(--ink-dim)" }}>your standing</span>
+              <CarrierRep address={stellarAddress} />
+            </span>
+          )}
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
             <span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--verified)" }} />
             <Stamp tone="dim">Live · polling every {POLL_MS / 1000}s</Stamp>
@@ -346,7 +353,7 @@ function MarketBoard() {
                   {l.amount === null ? "confidential" : `${l.amount} XLM`}
                 </span>
                 <span className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--ink-dim)" }}>{utcDay(l.escrowDeadline)}</span>
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   {l.state === "OPEN" ? (
                     stellarAddress ? (
                       <Button
@@ -370,7 +377,10 @@ function MarketBoard() {
                       </Button>
                     )
                   ) : (
-                    <Stamp tone={STATE_TONE[l.state]}>{l.state.replace("_", " ")}</Stamp>
+                    <>
+                      <Stamp tone={STATE_TONE[l.state]}>{l.state.replace("_", " ")}</Stamp>
+                      {l.payout && <CarrierRep address={l.payout} />}
+                    </>
                   )}
                 </div>
               </div>

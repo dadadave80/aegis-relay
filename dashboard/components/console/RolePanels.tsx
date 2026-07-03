@@ -27,6 +27,7 @@ import type {
 import { useSession } from "@/lib/session-context";
 import { useWallet } from "@/lib/wallet-context";
 import { useWalletFlows } from "@/lib/wallet-flows";
+import { CarrierRep } from "@/components/market/CarrierRep";
 import { useToast } from "./toast";
 import {
   ActionButton,
@@ -503,6 +504,11 @@ function CarrierPanel() {
       subtitle="Buttons unlock in lifecycle order. Your wallet signs custody moves; each proof verifies and settles on-chain in a single Soroban transaction."
     >
       {!walletReady && <NeedWallet />}
+      {stellarAddress && (
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 0 6px" }}>
+          <CarrierRep address={stellarAddress} />
+        </div>
+      )}
       {error && <InlineError title={error.title} detail={error.detail} />}
 
       {ceremonyTx && (
