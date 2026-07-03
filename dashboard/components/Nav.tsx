@@ -6,7 +6,7 @@ const links = [
   { href: "/verify", label: "Verify" },
 ];
 
-const cta = { href: "/demo", label: "Demo console" };
+const cta = { href: "/console", label: "Open the app" };
 
 export default function Nav() {
   return (

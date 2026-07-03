@@ -13,7 +13,7 @@ const BEATS = [
   {
     glyph: "◆",
     title: "One session, every role",
-    body: "Switch between merchant, carrier, recipient, auditor and attacker — you drive the entire lifecycle.",
+    body: "Switch between merchant, carrier, recipient and auditor — you drive the entire lifecycle.",
   },
   {
     glyph: "▸",
@@ -45,7 +45,7 @@ export default function LoginScreen() {
             style={{ background: "var(--mint)" }}
             aria-hidden
           />
-          Interactive demo console
+          The app
         </span>
         <h1
           className="mt-6 text-3xl sm:text-4xl font-bold tracking-tight"

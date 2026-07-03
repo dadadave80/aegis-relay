@@ -1,5 +1,5 @@
 /**
- * Client-side fallbacks + link helpers for the demo console.
+ * Client-side fallbacks + link helpers for the console.
  *
  * The connected wallet acts on a fixed testnet deployment. Contract ids +
  * explorer bases live here (mirroring WalletInfo.contracts / lib/contract.ts)
@@ -66,12 +66,6 @@ export const ROLES: RoleMeta[] = [
     label: "Auditor",
     glyph: "⊙",
     acting: "the regulator — you hold the one key that opens confidential amounts.",
-  },
-  {
-    role: "attacker",
-    label: "Attacker",
-    glyph: "✕",
-    acting: "an attacker — every shortcut you try is meant to be rejected.",
   },
 ];
 

@@ -6,8 +6,8 @@
  * On-chain, value-moving actions (Merchant create; Carrier accept / submit
  * flight / deliver) are signed by the CONNECTED PRIVY STELLAR WALLET via
  * useWalletFlows() — build on the stateless server, sign in the wallet, submit.
- * Stateless server work (verify / fly / prove-delivery / recipient PoD / audit /
- * attack) stays on api.*. After each wallet-flow we re-read the shipment so the
+ * Stateless server work (verify / fly / prove-delivery / recipient PoD / audit)
+ * stays on api.*. After each wallet-flow we re-read the shipment so the
  * lifecycle board stays live. Every async action shows a spinner + step label,
  * disables while running, and renders failures inline (never crashes).
  */
@@ -15,8 +15,6 @@
 import { useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import type {
-  AttackKind,
-  AttackRes,
   AuditRes,
   CreateParams,
   Method,
@@ -741,116 +739,6 @@ function AuditorPanel() {
   );
 }
 
-// ── Attacker ─────────────────────────────────────────────────────────────────
-
-const ATTACKS: { kind: AttackKind; label: string; desc: string }[] = [
-  { kind: "replay", label: "Replay proof", desc: "Resubmit another shipment's proof" },
-  { kind: "tamper", label: "Tamper proof", desc: "Flip a byte in a valid proof" },
-  { kind: "wrongproof", label: "Wrong proof", desc: "Valid points, wrong statement" },
-  { kind: "stray", label: "Stray flight", desc: "Fly one cell off-corridor" },
-  { kind: "premature", label: "Premature settle", desc: "Spend escrow before DELIVERED" },
-];
-
-function AttackerPanel() {
-  const { currentShipmentId, shipment } = useSession();
-  const { runningKey, error, setError, run } = useRunner();
-  const [result, setResult] = useState<{ kind: AttackKind; res: AttackRes; code?: string } | null>(
-    null,
-  );
-
-  if (currentShipmentId === null || !shipment) {
-    return (
-      <Panel
-        title="Attacker — every shortcut is rejected"
-        subtitle="The contrast is the pitch: each attack is caught, with the exact error code."
-      >
-        <NeedShipment />
-      </Panel>
-    );
-  }
-
-  const attack = (kind: AttackKind) =>
-    run(kind, async () => {
-      setResult(null);
-      const res = await api.attack({ shipmentId: currentShipmentId, kind });
-      if (res.data) setResult({ kind, res: res.data, code: res.errorCode });
-      else
-        setError({
-          title: "Attack could not run",
-          detail: res.error ?? "The backend didn't return a rejection to display.",
-        });
-    });
-
-  return (
-    <Panel
-      title="Attacker — every shortcut is rejected"
-      subtitle="A drone that strays one cell can't even produce a proof; escrow keys grant zero spending authority. Try to break it."
-    >
-      {error && <InlineError title={error.title} detail={error.detail} />}
-
-      <div className="grid sm:grid-cols-2 gap-3">
-        {ATTACKS.map((a) => (
-          <div
-            key={a.kind}
-            className="rounded-xl p-4 flex flex-col gap-3"
-            style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
-          >
-            <div>
-              <p className="text-sm font-semibold">{a.label}</p>
-              <p className="text-xs mt-0.5" style={{ color: "var(--text-faint)" }}>
-                {a.desc}
-              </p>
-            </div>
-            <ActionButton
-              variant="danger"
-              onClick={() => attack(a.kind)}
-              loading={runningKey === a.kind}
-              loadingLabel="Attempting…"
-              className="w-full"
-            >
-              Attempt {a.label.toLowerCase()}
-            </ActionButton>
-          </div>
-        ))}
-      </div>
-
-      {result && (
-        <div
-          className="card p-5"
-          style={{ borderColor: "color-mix(in srgb, var(--red) 50%, transparent)" }}
-        >
-          <div className="flex items-center gap-2">
-            <span
-              className="text-sm font-bold px-2 py-0.5 rounded"
-              style={{
-                color: "var(--red)",
-                background: "color-mix(in srgb, var(--red) 14%, transparent)",
-              }}
-            >
-              {result.res.rejected ? "REJECTED" : "NOT REJECTED"}
-            </span>
-            <span className="text-sm font-semibold">
-              {ATTACKS.find((a) => a.kind === result.kind)?.label}
-            </span>
-          </div>
-          <div className="mt-3 space-y-1.5 text-sm">
-            <p>
-              <span style={{ color: "var(--text-faint)" }}>Caught at: </span>
-              <span style={{ color: "var(--text)" }}>{result.res.where}</span>
-            </p>
-            <p style={{ color: "var(--text-dim)" }}>{result.res.detail}</p>
-            {result.code && (
-              <p className="mono text-xs pt-1" style={{ color: "var(--red)" }}>
-                {result.code}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
 // ── Switch ───────────────────────────────────────────────────────────────────
 
 export default function ActionPanel({ role }: { role: Role }) {
@@ -863,8 +751,6 @@ export default function ActionPanel({ role }: { role: Role }) {
       return <RecipientPanel />;
     case "auditor":
       return <AuditorPanel />;
-    case "attacker":
-      return <AttackerPanel />;
     default:
       return null;
   }

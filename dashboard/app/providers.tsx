@@ -2,7 +2,7 @@
 
 /**
  * Global providers. Wallet connection (Stellar Wallets Kit) is scoped to the
- * demo console (mounted in app/demo/page.tsx via <WalletProvider>), so there is
+ * console (mounted in app/console/page.tsx via <WalletProvider>), so there is
  * no app-wide auth provider — this is a thin pass-through that also exports the
  * shared mint accent used across the console.
  */

@@ -1,8 +1,8 @@
-// Shared types for the interactive demo — the PINNED CONTRACT between the
-// server API routes (app/api/**) and the client console (app/demo/**, components/**).
+// Shared types for the app — the PINNED CONTRACT between the server API routes
+// (app/api/**) and the client console (app/console/**, components/**).
 // Both sides import from here. Do not change a shape without updating both.
 
-export type Role = "merchant" | "carrier" | "recipient" | "auditor" | "attacker";
+export type Role = "merchant" | "carrier" | "recipient" | "auditor";
 export type Method = "courier" | "drone";
 export type Rail = "transparent" | "confidential";
 
@@ -75,7 +75,7 @@ export interface ShipmentView {
 export interface ActionResult<T = unknown> {
   ok: boolean;
   error?: string;
-  errorCode?: string;   // e.g. "Error(Contract, #4302)" for the attack beats
+  errorCode?: string;   // e.g. "Error(Contract, #2)" surfaced from a rejected action
   tx?: string;          // explorer tx hash when a tx landed
   data?: T;
 }
@@ -106,12 +106,3 @@ export interface FlyRes {
 export interface SignPodReq extends ShipmentReq { lat: number; lon: number; }
 
 export interface AuditRes { amountXlm: string; note: string; }
-
-export type AttackKind =
-  | "replay"        // resubmit another shipment's proof → BadProof/TsBeforeAccept
-  | "tamper"        // flip a proof byte → Crypto/InvalidInput
-  | "wrongproof"    // valid points, wrong proof → BadProof #1
-  | "stray"         // dronesim off-corridor → rejected at witness gen
-  | "premature";    // confidential: settle before DELIVERED → hook #4302
-export interface AttackReq extends ShipmentReq { kind: AttackKind; }
-export interface AttackRes { rejected: boolean; where: string; detail: string; }
