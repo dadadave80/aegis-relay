@@ -120,22 +120,39 @@ Design system to preserve (do not restyle): dark bg + `--mint` accent, `card`,
 - Delete `dashboard/app/api/attack/` (whole route dir)
 - Edit: `dashboard/lib/types.ts`, `dashboard/lib/api.ts`,
   `dashboard/lib/session-context.tsx`, `dashboard/app/page.tsx`,
-  and (post-rename) the files under `dashboard/components/console/` that
-  reference the attacker or "demo", plus `dashboard/app/console/*`.
-- Edit `dashboard/lib/server/flows.ts` ONLY to remove the now-unreferenced
-  `attackFlow`/`attackDeliverProof` (and their imports) — see Step 5.
+  `dashboard/components/Nav.tsx` (**required** — the `/demo` CTA at Nav.tsx:9
+  must become `/console` or nav 404s), `dashboard/app/providers.tsx` (its stale
+  `app/demo/page.tsx` comment → `app/console`), and (post-rename) the files under
+  `dashboard/components/console/` that reference the attacker or the demo-console
+  framing, plus `dashboard/app/console/*`.
+- Edit `dashboard/lib/server/flows.ts` to remove the now-unreferenced
+  `attackFlow`/`attackDeliverProof` and the `applyAttack` import (flows.ts:26 is
+  the only dashboard consumer of prover-dist's attack API — see Step 5).
 - `dashboard/README.md` (remove attacker/"demo console" copy).
 
-**Out of scope**:
+**Out of scope** (leave; the targeted acceptance greps below will not flag them):
+- `dashboard/lib/server/prover-dist/**` — 20 vendored/compiled prover files
+  (tracked but generated from `prover/src`). They contain `ATTACK_MODES`,
+  `applyAttack`, `AttackMode` and `demo`/`attack` comments — that is the drone-
+  simulation crypto, NOT the UI attacker feature. Do NOT edit them; the
+  acceptance greps exclude this dir. (After Step 5, nothing in the dashboard app
+  imports `applyAttack` — the vendored export simply goes unused, which is fine.)
+- `dashboard/lib/server/store.ts` — its `.demo-state` runtime-dir constant is
+  load-bearing (the mailbox path); do NOT rename it. Its internal
+  "demo mailbox"/"replay attack" comments are server-internal and may be reworded
+  but are NOT required (the greps exclude ordinary prose in server internals).
+- `dashboard/lib/server/soroban.ts` — internal comments ("attack rejections")
+  may be reworded but are not required.
+- Ordinary-English "demo" in `dashboard/app/verify/page.tsx`,
+  `dashboard/app/map/page.tsx`, `dashboard/app/track/[id]/page.tsx` ("demo
+  fixture", "corridor demo", "demo stand-in") and "attack surface" in
+  `app/page.tsx:43` — these are normal words, not toy-framing; leave them.
 - Do NOT change the on-chain-reading behavior of any route — they already read
-  the real deployed contract; this plan only removes the attacker route and the
-  "demo" labels.
+  the real deployed contract.
 - Do NOT touch `contracts/`, `prover/`, `circuits/`.
-- Do NOT restyle or re-lay-out the panels/board — only remove the attacker and
-  rename. Visual polish is not this plan.
-- Do NOT add the role-selection modal — that is plan 003.
-- Keep the recipient PoD (server-signed) and confidential-audit routes as they
-  are; they are real behavior, not gimmicks.
+- Do NOT restyle/re-lay-out the panels/board; do NOT add the role modal (plan 003).
+- Keep the recipient PoD (server-signed) and confidential-audit routes as-is —
+  real behavior, not gimmicks.
 
 ## Git workflow
 
@@ -276,16 +293,37 @@ also mention attacker — grep and fix if present.)
 
 **Verify**: `grep -rin "attacker\|demo console" dashboard/README.md` → no matches.
 
-### Step 9: Full gate
+### Step 8b: Fix the nav CTA + stale comment (required for the rename)
+
+- `dashboard/components/Nav.tsx:9` — `const cta = { href: "/demo", label: "Demo console" }`
+  → `href: "/console", label: "Console"`.
+- `dashboard/app/providers.tsx` — reword the comment that references
+  `app/demo/page.tsx` to `app/console/page.tsx`.
+
+**Verify**: `grep -rn "\"/demo\"\|href=\"/demo\"" dashboard/components dashboard/app`
+→ no matches.
+
+### Step 9: Full gate (targeted, satisfiable acceptance)
+
+The greps are targeted at the ACTUAL surfaces being removed (the attacker
+role/type/route; the demo-console framing + `/demo` route), and exclude vendored
+prover code and ordinary English — a blanket "no attack/demo substring" is
+neither satisfiable (vendored `prover-dist`) nor meaningful.
 
 **Verify**:
 - `cd dashboard && bun run lint` → exit 0.
-- `cd dashboard && bun run build` → exit 0.
-- `grep -rin "attack" dashboard/app dashboard/components dashboard/lib` → no matches.
-- `grep -rin "demo" dashboard/app dashboard/components dashboard/lib` → no matches
-  (the `demoFadeUp` CSS keyframe in `app/console/page.tsx` is the one allowed
-  exception — rename it to `fadeUp`/`consoleFadeUp` to make this grep clean, or
-  document it).
+- `cd dashboard && bun run build` → exit 0; the route list shows `○ /console`,
+  not `/demo`.
+- Attacker surface gone (`--exclude-dir=prover-dist` skips vendored crypto):
+  `grep -rniE "attacker|AttackKind|AttackReq|AttackRes|api\.attack|AttackerPanel|/api/attack" dashboard/app dashboard/components dashboard/lib --exclude-dir=prover-dist`
+  → no matches.
+- Demo-console framing + `/demo` route gone:
+  `grep -rniE "demo console|/demo\b|app/demo|components/demo" dashboard/app dashboard/components dashboard/lib --exclude-dir=prover-dist`
+  → no matches.
+- The `demoFadeUp` CSS keyframe (defined in `app/console/page.tsx`, consumed by
+  `Console.tsx`, `LoginScreen.tsx`, `toast.tsx`) does NOT match the greps above,
+  so it may stay as-is. (Optional: rename to `fadeUp` across those 4 files for
+  tidiness — not required.)
 
 ## Test plan
 
@@ -304,14 +342,16 @@ ALL must hold:
 
 - [ ] `cd dashboard && bun run lint` exits 0.
 - [ ] `cd dashboard && bun run build` exits 0; route list contains `/console`, not `/demo`.
-- [ ] `grep -rin "attack" dashboard/app dashboard/components dashboard/lib` → no matches.
-- [ ] `grep -rin "demo" dashboard/app dashboard/components dashboard/lib` → no
-      matches except a deliberately-renamed CSS keyframe (or none).
-- [ ] `dashboard/app/api/attack/` does not exist; `dashboard/lib/server` has no
-      `attack` references.
+- [ ] `grep -rniE "attacker|AttackKind|AttackReq|AttackRes|api\.attack|AttackerPanel|/api/attack" dashboard/app dashboard/components dashboard/lib --exclude-dir=prover-dist`
+      → no matches.
+- [ ] `grep -rniE "demo console|/demo\b|app/demo|components/demo" dashboard/app dashboard/components dashboard/lib --exclude-dir=prover-dist`
+      → no matches.
+- [ ] `dashboard/app/api/attack/` does not exist; `dashboard/lib/server/flows.ts`
+      has no `attackFlow`/`attackDeliverProof`/`applyAttack`.
 - [ ] `Role` union in `lib/types.ts` has exactly four members.
-- [ ] No files outside the in-scope list are modified (`git status`).
-- [ ] `plans/README.md` status row for 002 updated.
+- [ ] Only in-scope files modified (`git status`) — no edits to
+      `dashboard/lib/server/prover-dist/**`.
+- [ ] `plans/README.md` status row for 002 updated (reviewer maintains it).
 
 ## STOP conditions
 
