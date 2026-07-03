@@ -22,6 +22,22 @@ Aegis proves three statements about a shipment. Each one is *impossible* to make
 
 The marquee demonstration: **a machine proves it obeyed the rules of the sky without telling anyone where it flew.** ZK is the mechanism, not a garnish.
 
+### The shipment lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Open: create_shipment
+    Open --> InTransit: accept
+    InTransit --> InTransit: submit_flight · A2 proof · drone
+    InTransit --> Delivered: deliver · A1 proof · verify-and-settle
+    Open --> Expired: refund_expired
+    InTransit --> Expired: refund_expired
+    Delivered --> [*]
+    Expired --> [*]
+```
+
+Every transition asserts the expected current state; a Groth16 proof gates the milestone-releasing ones (`submit_flight`, `deliver`).
+
 ---
 
 ## What's deployed & proven on testnet
@@ -39,7 +55,7 @@ Everything below ran **live on Stellar Testnet** (Protocol 27) against the final
 | CT verifier (UltraHonk VKs) | [`CBSD5PB2C2M43JPLSP5OGMQUXCCKQ3BI2JOOKAMVGOFMWZ3WMLYR2J26`](https://stellar.expert/explorer/testnet/contract/CBSD5PB2C2M43JPLSP5OGMQUXCCKQ3BI2JOOKAMVGOFMWZ3WMLYR2J26) |
 | CT auditor (regulator key id 0) | [`CCORKIVLRHR3AIZB47VNVAHHIMNJ6QPEMDQYJQLJWOTSTXGJSO53GPP4`](https://stellar.expert/explorer/testnet/contract/CCORKIVLRHR3AIZB47VNVAHHIMNJ6QPEMDQYJQLJWOTSTXGJSO53GPP4) |
 
-Full deployment record and role addresses: [`docs/testnet.md`](docs/testnet.md).
+Full technical reference: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ### 1. Confidential courier — the amount is invisible, then the regulator opens it
 
@@ -82,7 +98,7 @@ Beyond the CLIs, Aegis Relay ships a **multi-sided marketplace web app** (`dashb
 
 **Groth16 proving runs in the browser.** The A1 delivery and A2 flight proofs are generated client-side with snarkjs against static wasm/zkey artifacts — the *same* witness the server would assemble, proved on the user's machine, flowing through the *unchanged* on-chain verify path — so the app is fully static-hostable (Vercel) with no serverless proving.
 
-Live demo: **https://aegis-relay.vercel.app** · local: `bun install && cd dashboard && bun run dev` (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
+Live demo: **https://aegis-relay.vercel.app** · local: `bun install && cd dashboard && bun run dev` (deployment in [`ARCHITECTURE.md`](ARCHITECTURE.md)).
 
 ---
 
@@ -90,8 +106,11 @@ Live demo: **https://aegis-relay.vercel.app** · local: `bun install && cd dashb
 
 The pipeline is fully platform-native — no external verifier service:
 
-```
-circom circuits → snarkjs Groth16 (BN254) → BN254/Poseidon host-fn verifier → atomic verify-and-settle in Soroban
+```mermaid
+flowchart LR
+    C["circom circuit"] --> S["snarkjs Groth16 · BN254"]
+    S -->|"proof + public inputs"| V["Groth16 verify: BN254 pairing + Poseidon host fns · CAP-0074/0075"]
+    V --> T["release escrow milestone — one atomic Soroban tx"]
 ```
 
 The Groth16 verifier is **not** a single host function. It is assembled in [`contracts/aegis-registry/src/groth16.rs`](contracts/aegis-registry/src/groth16.rs) from Stellar's native BN254 pairing/group-op primitives and the native Poseidon permutation (the CAP-0074 / CAP-0075 host functions). Verifying a proof and releasing escrow happen in the same transaction.
@@ -121,10 +140,10 @@ aegis-relay/
 │       └── lib/         #   bn254 (G2 limb-swap Rosetta stone), poseidon, packet, tree
 ├── dashboard/           # Next.js marketplace app — console, /market board,
 │                        #   /claim recipient page, browser-side Groth16 proving
-└── docs/                # DESIGN.md, PIVOT.md, testnet.md, demo-script.md
+└── ARCHITECTURE.md      # single technical reference (docs consolidated here)
 ```
 
-Two circuits are built and tested: **A1 `delivery.circom`** (proof of delivery, all methods) and **A2 `flight.circom`** (drone route compliance, N=16 waypoints). Credential (A3), multi-hop custody (A4), and cold-chain (A5) circuits are specified in the design and are roadmap. Full protocol semantics live in [`docs/DESIGN.md`](docs/DESIGN.md); the execution playbook and reuse audit in [`docs/PIVOT.md`](docs/PIVOT.md).
+Two circuits are built and tested: **A1 `delivery.circom`** (proof of delivery, all methods) and **A2 `flight.circom`** (drone route compliance, N=16 waypoints). Credential (A3), multi-hop custody (A4), and cold-chain (A5) circuits are specified in the design and are roadmap. Full protocol semantics and the technical reference live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ---
 
@@ -165,7 +184,7 @@ CI runs the contracts, prover, and dashboard jobs on every push.
 
 ### Drive the live testnet deployment
 
-Point the CLIs at the deployed registry and walk a full drone lifecycle. Values like the shipment id `N` and the carrier commitment are printed by earlier steps; see [`docs/demo-script.md`](docs/demo-script.md) for the annotated crib.
+Point the CLIs at the deployed registry and walk a full drone lifecycle. Values like the shipment id `N` and the carrier commitment are printed by earlier steps.
 
 ```bash
 export AEGIS_REGISTRY_ID=CC4HXXHUE6ZCIVVN4XAHPV4JMYHEWK7ZIKILQMG5WCJ4V67NWLFTVGCA
@@ -223,7 +242,7 @@ Under-claiming is worse than the leak. This section is the point — a judge sho
 
 **7. The confidential rail is single-milestone only, and deposits are public.** Because the registry never learns the amount, the confidential rail supports a single `[10000]` milestone only; multi-milestone escrow stays on the transparent rail. The merchant's `deposit` into the token is a **public amount** — the merchant's aggregate float across shipments, not a per-shipment figure.
 
-**8. On-chain leaks that remain.** Even at best, the public chain still sees: settlement **addresses** (carrier accept + payout, merchant funding), state-transition **timing**, the `lane_id` (a coarse regulator-published route class), and — on the *transparent* rail — the **escrow amount**. Mitigated *now* by fresh Stellar keys per role per shipment (the demo does this) and a coarsened public deadline; batching / shielded-pool windows are roadmap. Full leak table: [`docs/DESIGN.md`](docs/DESIGN.md) §13.
+**8. On-chain leaks that remain.** Even at best, the public chain still sees: settlement **addresses** (carrier accept + payout, merchant funding), state-transition **timing**, the `lane_id` (a coarse regulator-published route class), and — on the *transparent* rail — the **escrow amount**. Mitigated *now* by fresh Stellar keys per role per shipment (the demo does this) and a coarsened public deadline; batching / shielded-pool windows are roadmap.
 
 **9. BN254 is ~100–110-bit security.** The choice is deliberate (smallest proofs, cheapest verify, native host-fn support, proven v1 plumbing). Migration to **BLS12-381 is roadmap**.
 

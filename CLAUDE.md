@@ -2,9 +2,9 @@
 
 Privacy-preserving supply-chain custody & delivery settlement on Stellar. Groth16/BN254 proofs (circom + snarkjs) verified on-chain via Soroban's CAP-0074/0075 host functions; verify-and-settle is atomic in one transaction.
 
-**Normative docs — read before changing anything:**
-- `docs/DESIGN.md` — protocol semantics (wins on *what/why*)
-- `docs/PIVOT.md` — execution playbook, cutlines, reuse audit (wins on *how/when*)
+**Normative doc — read before changing anything:**
+- `ARCHITECTURE.md` — protocol semantics + technical reference (the former
+  `docs/DESIGN.md` + `docs/PIVOT.md` were consolidated here; originals in git history)
 
 ## Layout
 
