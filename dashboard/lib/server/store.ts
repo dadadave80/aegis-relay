@@ -19,7 +19,7 @@ import path from "node:path";
 import type { Packet } from "./prover-dist/lib/packet.js";
 import type { Pod } from "./prover-dist/recipient.js";
 import type { SnarkjsProof } from "./prover-dist/lib/bn254.js";
-import type { Method, Rail } from "../types";
+import type { Method, Rail, EscrowRecord } from "../types";
 
 const STATE_DIR = path.join(process.cwd(), ".demo-state");
 const SHIPS_DIR = path.join(STATE_DIR, "ships");
@@ -68,10 +68,14 @@ export interface ShipRecord {
   pod?: Pod;
   deliveryProof?: ProofBundle;
   flightProof?: ProofBundle;
+  /** Confidential rail: E's packet (secret + Grumpkin + opening). Never returned
+   * to clients except to the settling wallet (E's key is a hook-caged capability). */
+  escrow?: EscrowRecord;
   createdTx?: string;
   acceptTx?: string;
   flightTx?: string;
   deliverTx?: string;
+  settleTx?: string;
 }
 
 /** A prepared-but-unsigned transaction awaiting the wallet's signature. */
@@ -84,6 +88,7 @@ export interface PendingBuild {
   // create-only payload, promoted to a ShipRecord once the id is assigned:
   packet?: Packet;
   meta?: ShipMeta;
+  escrow?: EscrowRecord; // confidential create only
   // accept-only payload, attached to the ShipRecord on submit:
   carrierBJJ?: CarrierBJJ;
 }

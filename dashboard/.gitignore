@@ -1,3 +1,5 @@
 node_modules/
 .next/
 *.tsbuildinfo
+# Vendored @aztec/bb.js browser build (copied by scripts/vendor-bb.mjs on pre(dev|build)).
+public/vendor/

@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored @aztec/bb.js browser bundle (copied by scripts/vendor-bb.mjs);
+    // third-party minified artifacts, not our source.
+    "public/vendor/**",
   ]),
 ]);
 
