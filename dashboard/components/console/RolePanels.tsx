@@ -68,21 +68,26 @@ function useRunner() {
   return { runningKey, error, setError, run };
 }
 
-/** A shell every role panel shares: title, subtitle, body. */
+/** A shell every role panel shares: title, subtitle, body. The work column tints
+ *  to the station's temperature, and to cold under the Ledger Lens. */
 function Panel({
   title,
   subtitle,
+  temp = "warm",
   children,
 }: {
   title: string;
   subtitle: string;
+  temp?: "warm" | "cold" | "neutral";
   children: ReactNode;
 }) {
+  const { lens } = useSession();
+  const cls = lens || temp === "cold" ? "panel-cold" : temp === "neutral" ? "panel" : "panel-warm";
   return (
-    <div className="card p-5 sm:p-6 space-y-5">
+    <div className={`${cls} space-y-5`} style={{ padding: 24, transition: "background var(--dur-lens) ease-out" }}>
       <div>
-        <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-        <p className="text-sm mt-1" style={{ color: "var(--text-dim)" }}>
+        <h2 className="display" style={{ fontSize: "var(--text-lg)", fontWeight: 600 }}>{title}</h2>
+        <p style={{ margin: "6px 0 0", fontSize: "var(--text-sm)", color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
           {subtitle}
         </p>
       </div>
@@ -91,38 +96,45 @@ function Panel({
   );
 }
 
-function NeedShipment() {
+function Notice({ children }: { children: ReactNode }) {
   return (
     <div
-      className="text-sm rounded-lg p-4"
-      style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-dim)" }}
+      className="text-sm"
+      style={{ background: "var(--void-0)", border: "1px solid var(--hairline)", borderRadius: "var(--r-control)", padding: 16, color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}
     >
-      Focus or create a shipment first — switch to{" "}
-      <span style={{ color: "var(--mint)" }}>Merchant</span> to create one, or use
-      the <span className="mono">focus #</span> box on the lifecycle board.
+      {children}
     </div>
+  );
+}
+
+function NeedShipment() {
+  return (
+    <Notice>
+      Focus or create a shipment first — switch to{" "}
+      <span style={{ color: "var(--seal)" }}>Merchant</span> to create one, or use
+      the <span className="mono">focus #</span> box on the lifecycle board.
+    </Notice>
   );
 }
 
 /** Shown when an on-chain action needs a connected wallet but there is none. */
 function NeedWallet() {
   return (
-    <div
-      className="text-sm rounded-lg p-4"
-      style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-dim)" }}
-    >
-      Connect a wallet to sign on-chain actions — log in with a Privy wallet from
-      the top bar. You can still browse the board as a guest.
-    </div>
+    <Notice>
+      Connect a wallet to sign on-chain actions from the top bar. You can still
+      browse the board as a guest.
+    </Notice>
   );
 }
 
-function Result({ tone = "mint", children }: { tone?: "mint" | "amber"; children: ReactNode }) {
-  const color = tone === "amber" ? "var(--amber)" : "var(--mint)";
+function Result({ tone = "verified", children }: { tone?: "verified" | "caution"; children: ReactNode }) {
+  const color = tone === "caution" ? "var(--caution)" : "var(--verified)";
   return (
     <div
-      className="text-sm rounded-lg p-3.5"
+      className="text-sm"
       style={{
+        borderRadius: "var(--r-control)",
+        padding: 14,
         background: `color-mix(in srgb, ${color} 8%, transparent)`,
         border: `1px solid color-mix(in srgb, ${color} 35%, transparent)`,
       }}
@@ -254,7 +266,7 @@ function MerchantPanel() {
               onChange={setRail}
               options={[
                 { value: "transparent", label: "Transparent", glyph: "○" },
-                { value: "confidential", label: "Confidential", glyph: "🔒" },
+                { value: "confidential", label: "Confidential", glyph: "◈" },
               ]}
             />
           </div>
@@ -300,17 +312,18 @@ function CarrierStep({
 }) {
   const color =
     status === "done"
-      ? "var(--mint)"
+      ? "var(--verified)"
       : status === "active"
-        ? "var(--text)"
-        : "var(--text-faint)";
+        ? "var(--ink)"
+        : "var(--ink-dim)";
   return (
     <div
-      className="rounded-xl p-4"
       style={{
-        background: "var(--bg)",
-        border: "1px solid var(--border)",
-        opacity: status === "locked" ? 0.6 : 1,
+        background: "var(--void-0)",
+        border: "1px solid var(--hairline)",
+        borderRadius: "var(--r-control)",
+        padding: 16,
+        opacity: status === "locked" ? 0.55 : 1,
       }}
     >
       <div className="flex items-start gap-3">
@@ -361,6 +374,7 @@ function CarrierPanel() {
     return (
       <Panel
         title="Carrier — take custody & prove compliance"
+      temp="neutral"
         subtitle="Verify the sealed packet against the on-chain commitment, accept custody, prove the flight, then prove delivery."
       >
         <NeedShipment />
@@ -460,6 +474,7 @@ function CarrierPanel() {
   return (
     <Panel
       title="Carrier — take custody & prove compliance"
+      temp="neutral"
       subtitle="Buttons unlock in lifecycle order. Your wallet signs custody moves; each proof verifies and settles on-chain in a single Soroban transaction."
     >
       {!walletReady && <NeedWallet />}
@@ -481,7 +496,7 @@ function CarrierPanel() {
             Verify packet
           </ActionButton>
           {verifyRes && (
-            <Result tone={verifyRes.match ? "mint" : "amber"}>
+            <Result tone={verifyRes.match ? "verified" : "caution"}>
               {verifyRes.match ? "✓ T12 match — " : "✗ mismatch — "}
               <span className="mono">{shortHash(verifyRes.cs)}</span> vs on-chain{" "}
               <span className="mono">{shortHash(verifyRes.onchainCs)}</span>
@@ -681,6 +696,7 @@ function AuditorPanel() {
     return (
       <Panel
         title="Auditor — decrypt the confidential amount"
+      temp="cold"
         subtitle="Private to the world, transparent to the regulator."
       >
         <NeedShipment />
@@ -700,13 +716,14 @@ function AuditorPanel() {
   return (
     <Panel
       title="Auditor — decrypt the confidential amount"
+      temp="cold"
       subtitle="Every confidential transfer carries auditor ciphertexts only the designated regulator key can open."
     >
       {!isConfidential && (
-        <Result tone="amber">
+        <Result tone="caution">
           This shipment uses the transparent rail — its amount is already public
           ({shipment.amountXlm ?? "—"} XLM). Create a{" "}
-          <span style={{ color: "var(--amber)" }}>confidential</span> shipment as
+          <span style={{ color: "var(--caution)" }}>confidential</span> shipment as
           the Merchant to see the decrypt beat land.
         </Result>
       )}
@@ -724,13 +741,11 @@ function AuditorPanel() {
 
       {audit && (
         <Result>
-          <p className="text-xs uppercase tracking-wider" style={{ color: "var(--text-faint)" }}>
-            Regulator sees
-          </p>
-          <p className="mono text-2xl font-semibold mt-1" style={{ color: "var(--mint)" }}>
+          <span className="stamp" style={{ color: "var(--chain-dim)" }}>Regulator sees</span>
+          <p className="mono" style={{ margin: "4px 0 0", fontSize: "var(--text-2xl)", fontWeight: 600, color: "var(--verified)" }}>
             {audit.amountXlm} XLM
           </p>
-          <p className="text-xs mt-1" style={{ color: "var(--text-dim)" }}>
+          <p style={{ margin: "4px 0 0", fontSize: "var(--text-xs)", color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
             {audit.note}
           </p>
         </Result>
