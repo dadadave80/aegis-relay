@@ -136,6 +136,18 @@ export interface FlyRes {
 
 export interface SignPodReq extends ShipmentReq { lat: number; lon: number; }
 
+/** POST /api/confidential/settle — release E's packet, or record a settle tx. */
+export interface ConfSettleReq { shipmentId: number; settleTx?: string; }
+
+/** Server hands the settling browser E's packet + the on-chain payout, gated on
+ * the shipment being DELIVERED (settle is admissible). E's key is a hook-caged
+ * capability — the token rejects any move the registry disallows (#4302). */
+export interface ConfSettleRelease {
+  escrow: EscrowRecord;
+  payout: string;
+  state: ShipmentState;
+}
+
 export interface AuditRes {
   amountXlm: string;
   note: string;

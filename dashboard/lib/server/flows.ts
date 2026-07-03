@@ -66,6 +66,7 @@ import type {
   VerifyRes,
   FlyRes,
   AuditRes,
+  ConfSettleRelease,
 } from "../types";
 
 // ── response envelope (matches lib/types.ts ActionResult) ────────────────────
@@ -551,4 +552,38 @@ export async function auditFlow(txHash?: string): Promise<AuditRes> {
     ? `live decrypt failed: ${liveError}`
     : "no confidential settlement on the current CT token yet — create + settle a confidential shipment to produce one";
   return { amountXlm: "—", note: `Regulator decrypt unavailable (${reason}).` };
+}
+
+// ── confidential settle (release E's packet, gated on DELIVERED) ──────────────
+
+/**
+ * Release E's escrow packet to the settling browser for a DELIVERED confidential
+ * shipment, with the on-chain payout. The browser then runs settleEscrow(E→payout)
+ * signed by E's keypair (the token's AegisEscrowHooks admit it iff Delivered —
+ * a premature attempt aborts #4302, so this gate is defence-in-depth, not the
+ * only guard).
+ *
+ * SECURITY: this returns E's Stellar SECRET to the browser — the ONE exception to
+ * store.ts's "secrets never returned". Deliberate, per the client-side design
+ * ("E's keys travel in the packet"): E is a throwaway per-shipment account whose
+ * only funds are the hook-caged escrow. Gated on DELIVERED so the packet only
+ * leaves the server once settle is actually admissible.
+ */
+export async function releaseEscrowFlow(shipmentId: number): Promise<ConfSettleRelease> {
+  const rec = store.getShip(shipmentId);
+  if (!rec) throw new Error(`no stored record for shipment ${shipmentId}`);
+  if (!rec.escrow) throw new Error(`shipment ${shipmentId} has no confidential escrow (transparent rail?)`);
+  const view = await shipmentView(shipmentId);
+  if (!view) throw new Error(`shipment ${shipmentId} not found on-chain`);
+  if (view.state !== "DELIVERED") {
+    throw new Error(`shipment ${shipmentId} is ${view.state}, not DELIVERED — settle is not admissible yet`);
+  }
+  if (!view.payout) throw new Error(`shipment ${shipmentId} has no on-chain payout address`);
+  return { escrow: rec.escrow, payout: view.payout, state: view.state };
+}
+
+/** Record the confidential settle tx against the shipment (after the browser submits it). */
+export async function recordSettleFlow(shipmentId: number, settleTx: string): Promise<{ recorded: boolean }> {
+  const updated = store.updateShip(shipmentId, { settleTx });
+  return { recorded: updated !== undefined };
 }
