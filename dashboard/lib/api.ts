@@ -4,8 +4,8 @@
 "use client";
 import type {
   ShipmentView, ActionResult, BuildTxReq, BuildTxRes, SubmitTxReq, SubmitTxRes,
-  VerifyRes, FlyInputRes, ProveInputRes, SignPodReq, AuditRes, ShipmentReq, RoleInfo,
-  Listing, MarketClaimResult,
+  VerifyRes, FlyInputRes, ProveInputRes, AuditRes, ShipmentReq, RoleInfo,
+  Listing, MarketClaimResult, ClaimContext, PodSignReq,
 } from "./types";
 
 async function post<T>(path: string, body: unknown): Promise<ActionResult<T>> {
@@ -45,10 +45,12 @@ export const api = {
   proveDeliver: (b: ShipmentReq)  => post<ProveInputRes>("/api/prove-delivery", b),
   deliverRecord:(shipmentId: number, proof: unknown, publicSignals: string[]) =>
                   post<{ ready: boolean }>("/api/prove-delivery", { shipmentId, proof, publicSignals }),
-  signPod:      (b: SignPodReq)   => post<{ signed: boolean }>("/api/recipient-pod", b),
   audit:        (b: ShipmentReq)  => post<AuditRes>("/api/confidential/audit", b),
   shipment:     (id: number)      => get<ShipmentView>(`/api/shipment/${id}`),
   roleInfo:     (address: string) => get<RoleInfo>(`/api/role?address=${encodeURIComponent(address)}`),
+  // recipient claim link — GET signing context, POST the in-browser PoD signature
+  claimContext: (id: number)      => get<ClaimContext>(`/api/claim/${id}`),
+  claimPod:     (b: PodSignReq)   => post<{ signed: boolean }>("/api/claim", b),
   // marketplace board + credential-gated claim (Task 5)
   market: {
     list:  ()                                    => get<Listing[]>("/api/market"),

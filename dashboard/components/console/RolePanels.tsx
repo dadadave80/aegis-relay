@@ -642,12 +642,7 @@ function CarrierPanel() {
 // ── Recipient ────────────────────────────────────────────────────────────────
 
 function RecipientPanel() {
-  const { currentShipmentId, shipment, createdDest } = useSession();
-  const { toast } = useToast();
-  const { runningKey, error, setError, run } = useRunner();
-  const [signed, setSigned] = useState(false);
-  const [lat, setLat] = useState(String(createdDest?.lat ?? 6.5244));
-  const [lon, setLon] = useState(String(createdDest?.lon ?? 3.3792));
+  const { currentShipmentId, shipment } = useSession();
 
   if (currentShipmentId === null || !shipment) {
     return (
@@ -660,57 +655,34 @@ function RecipientPanel() {
     );
   }
 
-  const sign = () =>
-    run("sign", async () => {
-      const res = await api.signPod({
-        shipmentId: currentShipmentId,
-        lat: Number(lat),
-        lon: Number(lon),
-      });
-      if (res.ok && res.data?.signed) {
-        setSigned(true);
-        toast({ title: "Receipt signed", detail: "the carrier can now prove delivery" });
-      } else setError({ title: "Signing failed", detail: res.error ?? "Unknown error" });
-    });
-
   return (
     <Panel
       title="Recipient — sign proof of delivery"
       subtitle="The recipient's device signs one Poseidon message with the claim key issued by the merchant. The chain never sees the signature, the key, or the location — only a proof it all checks out."
     >
-      <div className="grid sm:grid-cols-2 gap-4">
-        <Field label="Signing lat" hint="must fall inside the committed destination region">
-          <TextInput value={lat} onChange={(e) => setLat(e.target.value)} inputMode="decimal" />
-        </Field>
-        <Field label="Signing lon">
-          <TextInput value={lon} onChange={(e) => setLon(e.target.value)} inputMode="decimal" />
-        </Field>
-      </div>
+      <Result>
+        Signing now happens on the recipient&apos;s own device, not in this console.
+        The merchant&apos;s claim link (
+        <span className="mono">/claim/{currentShipmentId}#&lt;seed&gt;</span>) carries
+        the one-time claim key in its URL fragment — open it as the recipient to sign
+        proof of delivery in the browser.
+      </Result>
 
-      {error && <InlineError title={error.title} detail={error.detail} />}
-
-      <ActionButton
-        onClick={sign}
-        loading={runningKey === "sign"}
-        loadingLabel="Signing PoD message…"
-        className="w-full sm:w-auto"
+      <a
+        href={`/claim/${currentShipmentId}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mono hover:underline"
+        style={{ color: "var(--mint)" }}
       >
-        Sign proof of delivery
-      </ActionButton>
-
-      {signed && (
-        <Result>
-          ✓ Receipt signed — bound to this carrier, this place, this moment. Switch
-          to <span style={{ color: "var(--mint)" }}>Carrier</span> to prove and
-          settle delivery.
-        </Result>
-      )}
+        open the claim page (needs the #seed from creation) ↗
+      </a>
 
       <Honesty>
         The PoD is a Baby Jubjub (circuit) signature, not a Stellar tx — the
-        recipient never transacts on-chain. In production this signing lives in
-        the recipient&apos;s wallet PWA behind the claim link; the demo signs it
-        on the stateless server with the same claim key, message and proof.
+        recipient never transacts on-chain. The claim seed lives only in the
+        claim link&apos;s URL fragment; the server never stores or sees it —
+        there is no server-side signing shortcut left in this console.
       </Honesty>
     </Panel>
   );

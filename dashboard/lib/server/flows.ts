@@ -17,9 +17,11 @@ import {
   verifyPacket,
   sampleFieldSalt,
 } from "./prover-dist/carrier.js";
-import { signPod, type Pod } from "./prover-dist/recipient.js";
+import type { Pod } from "./prover-dist/recipient.js";
 import { pkCommit } from "./prover-dist/lib/poseidon.js";
-import { latLonToQ } from "./prover-dist/lib/tree.js";
+import { latLonToQ, mortonCell } from "./prover-dist/lib/tree.js";
+import { RD_RES } from "./prover-dist/lib/constants.js";
+import { podRecord, type PodEnvelope } from "../pod/pod-record";
 import {
   buildFlightScenario,
   deriveDroneKey,
@@ -64,6 +66,7 @@ import type {
   AuditRes,
   ConfSettleRelease,
   ClaimContext,
+  PodSignReq,
   Listing,
   MarketClaimResult,
 } from "../types";
@@ -383,7 +386,16 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
     const packet = pend.packet!;
     const meta = pend.meta!;
     packet.shipment_id = id;
-    await store.putShip({ shipmentId: id, packet, meta, createdTx: res.hash, escrow: pend.escrow });
+
+    // The server never holds the recipient's claim seed once the shipment
+    // exists (Task 3 review: "server never holds the seed"). Capture it ONLY
+    // to mint the claim link below, then persist a stripped copy of the
+    // packet — assembleDeliveryWitness/verifyPacket read cs_opening/
+    // dest_region/pod, never recipient_claim, so the delivery path is
+    // unaffected by the strip.
+    const claimSeedHex = packet.recipient_claim.eddsa_seed_hex;
+    const persistedPacket = { ...packet, recipient_claim: { eddsa_seed_hex: "" } };
+    await store.putShip({ shipmentId: id, packet: persistedPacket, meta, createdTx: res.hash, escrow: pend.escrow });
 
     // ── Marketplace: publish the OPEN board listing (spec §6.1) ──
     const createdAt = Date.now();
@@ -413,7 +425,7 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
     // The claim SEED travels ONLY in the link fragment — never sent to or stored by
     // the server (§5 honesty). Surfaced here so the merchant UI can hand the link
     // to the recipient. The id exists only now (create_shipment return value).
-    claimLink = `/claim/${id}#${packet.recipient_claim.eddsa_seed_hex}`;
+    claimLink = `/claim/${id}#${claimSeedHex}`;
   } else if (pend.action === "accept" && pend.shipmentId) {
     const rec = await store.getShip(pend.shipmentId);
     if (rec && pend.carrierBJJ) {
@@ -430,11 +442,23 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
       listing.payout = pend.source; // payout == the connected carrier wallet (buildAccept)
       await store.putListing(listing);
     }
-    // Complete the recipient signing context now that a carrier is bound.
+    // Complete the recipient signing context now that a carrier is bound: the
+    // create-time stub only has the dest-region ROOT (no carrier yet); fill in
+    // carrierPkCommit AND reshape destRegion into { lat, lon, cellRd } — the
+    // exact fields claimContextFlow/the /claim page/signPodBrowser need. (rec
+    // is the just-fetched-above ShipRecord; reused, no extra store round-trip.)
     if (pend.carrierBJJ) {
       const ctx = await store.getClaimContext(pend.shipmentId);
       if (ctx) {
         ctx.carrierPkCommit = pend.carrierBJJ.commit;
+        if (rec) {
+          const { latQ, lonQ } = latLonToQ(rec.meta.toLat, rec.meta.toLon);
+          ctx.destRegion = {
+            lat: rec.meta.toLat,
+            lon: rec.meta.toLon,
+            cellRd: mortonCell(latQ, lonQ, RD_RES).toString(),
+          };
+        }
         await store.putClaimContext(pend.shipmentId, ctx);
       }
     }
@@ -449,32 +473,81 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
   return { tx: res.hash, shipmentId, view, claimLink };
 }
 
-// ── recipient PoD (Baby Jubjub signature, no Stellar tx) ──────────────────────
+// ── recipient claim link (GET context + in-browser PoD store) ────────────────
 
-export async function signPodFlow(id: number, lat: number, lon: number): Promise<{ signed: boolean }> {
+/**
+ * True once a KV-stored ClaimContext has been completed at accept-time:
+ * carrierPkCommit bound + destRegion reshaped to { lat, lon, cellRd } (see
+ * submitAction's accept branch). The create-time stub has an empty commit and
+ * a bare dest-region ROOT string — never signable — so it must NOT be served
+ * as-is; falling through to the mailbox-packet derivation below both gates
+ * gracefully ("no carrier yet") and self-heals if the accept-time patch above
+ * were ever missed.
+ */
+function isCompleteClaimContext(ctx: ClaimContext): boolean {
+  return (
+    Boolean(ctx.carrierPkCommit) &&
+    typeof ctx.destRegion === "object" &&
+    ctx.destRegion !== null &&
+    "cellRd" in (ctx.destRegion as Record<string, unknown>)
+  );
+}
+
+/**
+ * Signing context for the recipient claim page (/claim/<id>). Returns ONLY what
+ * the browser needs to sign the PoD — the carrier commit, the committed dest
+ * region cell (cell_rd) + its coords for the location confirm, and the ts to
+ * sign at. NEVER the claim seed (that rides the URL fragment, client-only). A
+ * COMPLETE create-time context in KV wins; otherwise it is derived fresh from
+ * the mailbox packet (also the graceful "no carrier yet" path pre-accept).
+ */
+export async function claimContextFlow(id: number): Promise<ClaimContext> {
+  if (!Number.isInteger(id) || id < 1) throw new Error(`not a shipment id: ${id}`);
+  const stored = await store.getClaimContext(String(id));
+  if (stored && isCompleteClaimContext(stored)) return stored;
+
   const rec = await store.getShip(id);
-  if (!rec) throw new Error(`no stored packet for shipment ${id}`);
-  if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted yet (no carrier commit)`);
+  if (!rec) throw new Error(`no shipment #${id} on this server — the claim link is for an unknown shipment`);
+  if (!rec.carrierBJJ) {
+    throw new Error(`shipment #${id} has no carrier yet — there is nothing to sign until a carrier accepts custody`);
+  }
 
-  // ts must be > accept_ts and within the on-chain freshness window.
-  const nowSec = Math.floor(Date.now() / 1000);
-  let ts = nowSec;
+  const { latQ, lonQ } = latLonToQ(rec.meta.toLat, rec.meta.toLon);
+  const cellRd = mortonCell(latQ, lonQ, RD_RES).toString();
+
+  // ts must be strictly after accept_ts (on-chain freshness); pick a fresh one.
+  let ts = Math.floor(Date.now() / 1000);
   const raw = await readShipmentRaw(id);
   if (raw.ok) {
     const acceptTs = asNumber(raw.raw.accept_ts);
     if (ts <= acceptTs) ts = acceptTs + 1;
   }
 
-  const { latQ, lonQ } = latLonToQ(lat, lon);
-  const pod: Pod = await signPod({
-    claimSeedHex: rec.packet.recipient_claim.eddsa_seed_hex,
+  return {
     shipmentId: id,
     carrierPkCommit: rec.carrierBJJ.commit,
-    latQ,
-    lonQ,
-    ts,
-  });
-  await store.updateShip(id, { pod });
+    destRegion: { lat: rec.meta.toLat, lon: rec.meta.toLon, cellRd },
+    tsWindow: ts,
+  };
+}
+
+/**
+ * Store a browser-signed proof-of-delivery against ship:<id>. The recipient
+ * derived their Baby Jubjub key from the fragment seed and signed
+ * m = Poseidon(DOM_PODMSG, id, carrier_pk_commit, cell_rd, ts) IN THE BROWSER;
+ * only the signature (+ ts + the confirmed committed coords) reaches us. We
+ * persist it in the exact Pod shape the A1 delivery witness reads. The coords are
+ * the committed dest coords, so cell_rd recomputed from lat_q/lon_q matches the
+ * signed message.
+ */
+export async function recordPodFlow(req: PodSignReq): Promise<{ signed: boolean }> {
+  const { shipmentId, signature, lat, lon } = req;
+  const rec = await store.getShip(shipmentId);
+  if (!rec) throw new Error(`no stored packet for shipment ${shipmentId}`);
+  if (!rec.carrierBJJ) throw new Error(`shipment ${shipmentId} not accepted yet (no carrier commit)`);
+  const { latQ, lonQ } = latLonToQ(lat, lon);
+  const pod = podRecord(signature as PodEnvelope, latQ, lonQ);
+  await store.updateShip(shipmentId, { pod: pod as Pod });
   return { signed: true };
 }
 
@@ -504,7 +577,7 @@ export async function deliveryInputFlow(id: number): Promise<{ input: unknown }>
   const rec = await store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted (no carrier key)`);
-  if (!rec.pod) throw new Error(`shipment ${id} has no PoD — sign it first (/api/recipient-pod)`);
+  if (!rec.pod) throw new Error(`shipment ${id} has no PoD — the recipient must sign the claim link first (/claim/${id})`);
 
   const witness = await assembleDeliveryWitness({
     packet: rec.packet,
