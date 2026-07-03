@@ -503,8 +503,27 @@ function isCompleteClaimContext(ctx: ClaimContext): boolean {
  */
 export async function claimContextFlow(id: number): Promise<ClaimContext> {
   if (!Number.isInteger(id) || id < 1) throw new Error(`not a shipment id: ${id}`);
+
+  // tsWindow is time-relative — it can NEVER be treated as "complete" and
+  // stored/reused verbatim. The registry enforces |now - ts| <= WINDOW_SEC
+  // (600s); a stale ts (e.g. the create-time `escrowDeadline` placeholder,
+  // hours-to-a-day out) makes `deliver` revert with Error::StaleTs. So this is
+  // recomputed FRESH on every return path, stored-complete or derived. ts must
+  // also land strictly after accept_ts (on-chain freshness).
+  const freshTsWindow = async (): Promise<number> => {
+    let ts = Math.floor(Date.now() / 1000);
+    const raw = await readShipmentRaw(id);
+    if (raw.ok) {
+      const acceptTs = asNumber(raw.raw.accept_ts);
+      if (ts <= acceptTs) ts = acceptTs + 1;
+    }
+    return ts;
+  };
+
   const stored = await store.getClaimContext(String(id));
-  if (stored && isCompleteClaimContext(stored)) return stored;
+  if (stored && isCompleteClaimContext(stored)) {
+    return { ...stored, tsWindow: await freshTsWindow() };
+  }
 
   const rec = await store.getShip(id);
   if (!rec) throw new Error(`no shipment #${id} on this server — the claim link is for an unknown shipment`);
@@ -515,19 +534,11 @@ export async function claimContextFlow(id: number): Promise<ClaimContext> {
   const { latQ, lonQ } = latLonToQ(rec.meta.toLat, rec.meta.toLon);
   const cellRd = mortonCell(latQ, lonQ, RD_RES).toString();
 
-  // ts must be strictly after accept_ts (on-chain freshness); pick a fresh one.
-  let ts = Math.floor(Date.now() / 1000);
-  const raw = await readShipmentRaw(id);
-  if (raw.ok) {
-    const acceptTs = asNumber(raw.raw.accept_ts);
-    if (ts <= acceptTs) ts = acceptTs + 1;
-  }
-
   return {
     shipmentId: id,
     carrierPkCommit: rec.carrierBJJ.commit,
     destRegion: { lat: rec.meta.toLat, lon: rec.meta.toLon, cellRd },
-    tsWindow: ts,
+    tsWindow: await freshTsWindow(),
   };
 }
 

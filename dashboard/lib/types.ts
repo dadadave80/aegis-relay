@@ -148,8 +148,6 @@ export interface ProveInputRes { input: unknown; }
 /** Phase-1 fly response — the map waypoints + the A2 circuit input. */
 export type FlyInputRes = FlyRes & { input: unknown };
 
-export interface SignPodReq extends ShipmentReq { lat: number; lon: number; }
-
 /** POST /api/confidential/settle — release E's packet, or record a settle tx. */
 export interface ConfSettleReq { shipmentId: number; settleTx?: string; }
 
