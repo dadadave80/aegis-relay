@@ -38,6 +38,7 @@ import {
   TextInput,
 } from "./primitives";
 import { txLink, FALLBACK_CONTRACTS } from "./config";
+import { ProofCeremony } from "@/components/ds/ProofCeremony";
 
 // ── shared helpers ───────────────────────────────────────────────────────────
 
@@ -367,6 +368,9 @@ function CarrierPanel() {
   const { runningKey, error, setError, run } = useRunner();
   const [verifyRes, setVerifyRes] = useState<VerifyRes | null>(null);
   const [proofReady, setProofReady] = useState(false);
+  // The verified tx of the last proof that landed — plays the ProofCeremony
+  // (bound to a REAL verify event, never simulated).
+  const [ceremonyTx, setCeremonyTx] = useState<string | null>(null);
   const contracts = FALLBACK_CONTRACTS;
   const walletReady = !!stellarAddress;
 
@@ -427,9 +431,11 @@ function CarrierPanel() {
 
   const submitFlight = () =>
     run("submitFlight", async () => {
+      setCeremonyTx(null);
       const res = await flows.submitFlight(currentShipmentId);
       if (res.ok && res.data) {
         afterMutation(res.data.view);
+        setCeremonyTx(res.data.view?.flightTx ?? res.data.tx ?? null);
         toast({ title: "Flight verified on-chain", detail: "flight_ok = true" });
       } else setError({ title: "Submit flight failed", detail: res.error ?? "Unknown error" });
     });
@@ -447,11 +453,13 @@ function CarrierPanel() {
 
   const deliver = () =>
     run("deliver", async () => {
+      setCeremonyTx(null);
       const res = await flows.deliver(currentShipmentId);
       if (res.ok && res.data) {
         afterMutation(res.data.view);
         setProofReady(false);
         const settleTx = res.data.view?.deliverTx ?? res.data.tx;
+        setCeremonyTx(settleTx ?? null);
         toast({
           title: "Delivered — escrow released",
           detail: settleTx ? (
@@ -479,6 +487,12 @@ function CarrierPanel() {
     >
       {!walletReady && <NeedWallet />}
       {error && <InlineError title={error.title} detail={error.detail} />}
+
+      {ceremonyTx && (
+        <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
+          <ProofCeremony playing tx={ceremonyTx} txHref={txLink(contracts, ceremonyTx)} />
+        </div>
+      )}
 
       <div className="space-y-3">
         <CarrierStep
