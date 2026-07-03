@@ -123,7 +123,7 @@ export async function shipmentView(id: number | string): Promise<ShipmentView | 
   const res = await readShipmentRaw(id);
   if (!res.ok) return undefined;
   const raw = res.raw;
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
 
   const state = asNumber(raw.state);
   const method = asNumber(raw.method, 1);
@@ -230,7 +230,7 @@ async function buildCreate(source: string, p: Partial<CreateParams>): Promise<Bu
     amountStroops,
     escrowDeadline: built.escrowDeadline,
   };
-  store.putPending({
+  await store.putPending({
     buildId: tx.buildId,
     action: "create",
     source,
@@ -296,7 +296,7 @@ async function buildConfidentialCreate(source: string, p: Partial<CreateParams>)
     amountStroops: "0", // registry amount is 0
     escrowDeadline: built.escrowDeadline,
   };
-  store.putPending({
+  await store.putPending({
     buildId: tx.buildId,
     action: "create",
     source,
@@ -313,7 +313,7 @@ async function buildConfidentialCreate(source: string, p: Partial<CreateParams>)
 }
 
 async function buildAccept(source: string, id: number): Promise<BuildTxRes> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id} — create it via this server first`);
   const carrierBJJ = await makeCarrierBJJ();
   const args = [
@@ -323,7 +323,7 @@ async function buildAccept(source: string, id: number): Promise<BuildTxRes> {
     scU256(carrierBJJ.commit),
   ];
   const tx = await buildInvoke("accept", source, args);
-  store.putPending({
+  await store.putPending({
     buildId: tx.buildId,
     action: "accept",
     source,
@@ -335,36 +335,36 @@ async function buildAccept(source: string, id: number): Promise<BuildTxRes> {
 }
 
 async function buildSubmitFlight(source: string, id: number): Promise<BuildTxRes> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec?.flightProof) throw new Error(`no flight proof for shipment ${id} — run /api/drone/fly first`);
   const pub = rec.flightProof.publicSignals; // [id, c_s, head, corridor_root, t_0, t_n]
   const args = [scU64(id), scProof(rec.flightProof.proof), scU64(pub[4]), scU64(pub[5])];
   const tx = await buildInvoke("submit_flight", source, args);
-  store.putPending({ buildId: tx.buildId, action: "submitFlight", source, xdr: tx.xdr, shipmentId: String(id) });
+  await store.putPending({ buildId: tx.buildId, action: "submitFlight", source, xdr: tx.xdr, shipmentId: String(id) });
   return { buildId: tx.buildId, xdr: tx.xdr };
 }
 
 async function buildDeliver(source: string, id: number): Promise<BuildTxRes> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec?.deliveryProof) throw new Error(`no delivery proof for shipment ${id} — run /api/prove-delivery first`);
   const pub = rec.deliveryProof.publicSignals; // [id, c_s, head, nullifier, ts]
   const args = [scU64(id), scProof(rec.deliveryProof.proof), scU256(pub[3]), scU64(pub[4])];
   const tx = await buildInvoke("deliver", source, args);
-  store.putPending({ buildId: tx.buildId, action: "deliver", source, xdr: tx.xdr, shipmentId: String(id) });
+  await store.putPending({ buildId: tx.buildId, action: "deliver", source, xdr: tx.xdr, shipmentId: String(id) });
   return { buildId: tx.buildId, xdr: tx.xdr };
 }
 
 async function buildRefund(source: string, id: number): Promise<BuildTxRes> {
   const args = [scU64(id)];
   const tx = await buildInvoke("refund_expired", source, args);
-  store.putPending({ buildId: tx.buildId, action: "refund", source, xdr: tx.xdr, shipmentId: String(id) });
+  await store.putPending({ buildId: tx.buildId, action: "refund", source, xdr: tx.xdr, shipmentId: String(id) });
   return { buildId: tx.buildId, xdr: tx.xdr };
 }
 
 // ── submit (attach signature, persist packet on create) ──────────────────────
 
 export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
-  const pend = store.getPending(req.buildId);
+  const pend = await store.getPending(req.buildId);
   if (!pend) throw new Error(`no pending tx for buildId ${req.buildId}`);
   const res = await submitSignedXdr(req.signedXdr, pend.xdr);
 
@@ -376,21 +376,21 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
     shipmentId = Number(id);
     const packet = pend.packet!;
     packet.shipment_id = id;
-    store.putShip({ shipmentId: id, packet, meta: pend.meta!, createdTx: res.hash, escrow: pend.escrow });
+    await store.putShip({ shipmentId: id, packet, meta: pend.meta!, createdTx: res.hash, escrow: pend.escrow });
   } else if (pend.action === "accept" && pend.shipmentId) {
-    const rec = store.getShip(pend.shipmentId);
+    const rec = await store.getShip(pend.shipmentId);
     if (rec && pend.carrierBJJ) {
       rec.packet.carrier_pk_commit = pend.carrierBJJ.commit;
-      store.putShip({ ...rec, carrierBJJ: pend.carrierBJJ, acceptTx: res.hash });
+      await store.putShip({ ...rec, carrierBJJ: pend.carrierBJJ, acceptTx: res.hash });
     }
     shipmentId = Number(pend.shipmentId);
   } else if (pend.shipmentId) {
     const patch = pend.action === "submitFlight" ? { flightTx: res.hash } : { deliverTx: res.hash };
-    store.updateShip(pend.shipmentId, patch);
+    await store.updateShip(pend.shipmentId, patch);
     shipmentId = Number(pend.shipmentId);
   }
 
-  store.delPending(req.buildId);
+  await store.delPending(req.buildId);
   const view = shipmentId !== undefined ? await shipmentView(shipmentId) : undefined;
   return { tx: res.hash, shipmentId, view };
 }
@@ -398,7 +398,7 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
 // ── recipient PoD (Baby Jubjub signature, no Stellar tx) ──────────────────────
 
 export async function signPodFlow(id: number, lat: number, lon: number): Promise<{ signed: boolean }> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted yet (no carrier commit)`);
 
@@ -420,7 +420,7 @@ export async function signPodFlow(id: number, lat: number, lon: number): Promise
     lonQ,
     ts,
   });
-  store.updateShip(id, { pod });
+  await store.updateShip(id, { pod });
   return { signed: true };
 }
 
@@ -447,7 +447,7 @@ function jsonSafeInput(w: unknown): unknown {
  * multi-MB zkeys never need to live in a serverless function.
  */
 export async function deliveryInputFlow(id: number): Promise<{ input: unknown }> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted (no carrier key)`);
   if (!rec.pod) throw new Error(`shipment ${id} has no PoD — sign it first (/api/recipient-pod)`);
@@ -471,9 +471,9 @@ export async function recordDeliveryProofFlow(
   proof: unknown,
   publicSignals: string[],
 ): Promise<{ ready: boolean }> {
-  if (!store.getShip(id)) throw new Error(`no stored packet for shipment ${id}`);
+  if (!await store.getShip(id)) throw new Error(`no stored packet for shipment ${id}`);
   if (!proof || !Array.isArray(publicSignals)) throw new Error("proof + publicSignals required");
-  store.updateShip(id, { deliveryProof: { proof: proof as SnarkjsProof, publicSignals } });
+  await store.updateShip(id, { deliveryProof: { proof: proof as SnarkjsProof, publicSignals } });
   return { ready: true };
 }
 
@@ -491,7 +491,7 @@ const lonQtoDeg = (q: number) => (q / Q) * 360 - 180;
  * so it flows to the tx consistently.
  */
 export async function flightInputFlow(id: number): Promise<FlyRes & { input: unknown }> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   if (rec.meta.method !== "drone") throw new Error(`shipment ${id} is not a drone shipment`);
   if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted yet (no carrier commit)`);
@@ -546,16 +546,16 @@ export async function recordFlightProofFlow(
   proof: unknown,
   publicSignals: string[],
 ): Promise<{ ok: boolean }> {
-  if (!store.getShip(id)) throw new Error(`no stored packet for shipment ${id}`);
+  if (!await store.getShip(id)) throw new Error(`no stored packet for shipment ${id}`);
   if (!proof || !Array.isArray(publicSignals)) throw new Error("proof + publicSignals required");
-  store.updateShip(id, { flightProof: { proof: proof as SnarkjsProof, publicSignals } });
+  await store.updateShip(id, { flightProof: { proof: proof as SnarkjsProof, publicSignals } });
   return { ok: true };
 }
 
 // ── carrier verify (T12) ─────────────────────────────────────────────────────
 
 export async function verifyFlow(id: number): Promise<VerifyRes> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   const raw = await readShipmentRaw(id);
   const onchainCs = raw.ok ? asDecimal(raw.raw.c_s) : "0";
@@ -615,7 +615,7 @@ export async function auditFlow(txHash?: string): Promise<AuditRes> {
  * leaves the server once settle is actually admissible.
  */
 export async function releaseEscrowFlow(shipmentId: number): Promise<ConfSettleRelease> {
-  const rec = store.getShip(shipmentId);
+  const rec = await store.getShip(shipmentId);
   if (!rec) throw new Error(`no stored record for shipment ${shipmentId}`);
   if (!rec.escrow) throw new Error(`shipment ${shipmentId} has no confidential escrow (transparent rail?)`);
   const view = await shipmentView(shipmentId);
@@ -629,6 +629,6 @@ export async function releaseEscrowFlow(shipmentId: number): Promise<ConfSettleR
 
 /** Record the confidential settle tx against the shipment (after the browser submits it). */
 export async function recordSettleFlow(shipmentId: number, settleTx: string): Promise<{ recorded: boolean }> {
-  const updated = store.updateShip(shipmentId, { settleTx });
+  const updated = await store.updateShip(shipmentId, { settleTx });
   return { recorded: updated !== undefined };
 }

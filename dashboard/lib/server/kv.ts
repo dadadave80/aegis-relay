@@ -24,7 +24,9 @@ export interface Kv {
   zrange(key: string, start: number, stop: number): Promise<string[]>;
 }
 
-function useVercelKv(): boolean {
+// Named to avoid the `use*` prefix: eslint's react-hooks plugin treats any
+// top-level `use*` function as a React Hook and flags this call site.
+function shouldUseVercelKv(): boolean {
   return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 }
 
@@ -142,4 +144,4 @@ function makeVercelKv(): Kv {
   };
 }
 
-export const kv: Kv = useVercelKv() ? makeVercelKv() : makeMemoryKv();
+export const kv: Kv = shouldUseVercelKv() ? makeVercelKv() : makeMemoryKv();

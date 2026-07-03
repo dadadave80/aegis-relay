@@ -171,3 +171,39 @@ export interface AuditRes {
   /** Sender + recipient auditor ciphertexts decrypt to the same amount. */
   channelsAgree?: boolean;
 }
+
+// ── Marketplace (Spec 1): store-domain records ───────────────────────────────
+
+/** A shipment surfaced on the carrier marketplace. `amount` is null on the
+ *  confidential rail (hidden on-chain). Mirrors the on-chain view + mailbox meta. */
+export interface Listing {
+  shipmentId: number;
+  amount: string | null;
+  method: Method;
+  laneId: number | null;
+  escrowDeadline: number;
+  state: ShipmentState;
+  createdAt: number;
+  payout?: string;
+}
+
+/** Minimal PoD-signing context handed to a claim recipient. NOT the seed — the
+ *  seed lives only in the /claim/<id>#<seedHex> URL fragment, never server-side. */
+export interface ClaimContext {
+  shipmentId: number;
+  carrierPkCommit: string;
+  destRegion: unknown;
+  tsWindow: number;
+}
+
+/** Whether a carrier address has been credentialed (one-shot onboarding). */
+export interface CarrierStatus {
+  credentialed: boolean;
+  onboardedAt?: number;
+}
+
+/** Per-address carrier reputation counters. */
+export interface Reputation {
+  delivered: number;
+  expired: number;
+}
