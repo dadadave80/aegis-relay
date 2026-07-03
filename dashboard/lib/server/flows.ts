@@ -72,8 +72,7 @@ import type {
   CarrierStatus,
   Reputation,
 } from "../types";
-import { ensureCredentialed, isValidStellarAddress } from "../carrier-gate";
-export { NotCredentialedError } from "../carrier-gate"; // re-export for routes + Task 5
+import { isValidStellarAddress } from "../carrier-gate";
 import { buildListing } from "../listing";
 import { decideClaim } from "../market/claim-gate";
 
@@ -84,15 +83,8 @@ export function ok<T>(data: T): { ok: true; data: T } {
 }
 export function fail(e: unknown): { ok: false; error: string; errorCode?: string } {
   const error = e instanceof Error ? e.message : String(e);
-  // Prefer an explicit `errorCode` tag on the thrown error (e.g. NotCredentialedError
-  // → "NOT_CREDENTIALED", so the client can render the onboarding prompt); otherwise
-  // fall back to a parsed Soroban `Error(Contract, #n)` code.
-  const tagged =
-    e && typeof e === "object" && "errorCode" in e
-      ? String((e as { errorCode: unknown }).errorCode)
-      : undefined;
   const m = /#(\d+)\b/.exec(error);
-  return { ok: false, error, errorCode: tagged ?? (m ? `Error(Contract, #${m[1]})` : undefined) };
+  return { ok: false, error, errorCode: m ? `Error(Contract, #${m[1]})` : undefined };
 }
 
 // ── small decoders (mirror lib/contract.ts) ──────────────────────────────────
@@ -833,16 +825,6 @@ export async function marketClaimFlow(
 // ── carrier onboarding + credential gate (Spec 1 marketplace) ────────────────
 
 /**
- * Gate for the /market claim path (Task 5 marketClaimFlow): throw
- * NotCredentialedError unless `address` is a credentialed carrier in the shared
- * store. The route catches it and `fail()` tags errorCode="NOT_CREDENTIALED" so
- * the client shows a "Become a carrier" prompt (spec §12) rather than the packet.
- */
-export async function assertCarrierCredentialed(address: string): Promise<void> {
-  ensureCredentialed(address, await store.getCarrier(address));
-}
-
-/**
  * Onboard a carrier: mark `address` credentialed so it can claim from /market.
  * Idempotent — re-onboarding a credentialed carrier preserves its onboardedAt.
  *
@@ -864,7 +846,7 @@ export async function onboardCarrierFlow(address: string): Promise<CarrierStatus
   const existing = await store.getCarrier(address);
   if (existing.credentialed) return existing; // idempotent — keep original onboardedAt
   await store.setCarrierCredentialed(address, Math.floor(Date.now() / 1000));
-  return store.getCarrier(address);
+  return await store.getCarrier(address);
 }
 
 /** Carrier status for GET /api/carrier/<address>: credential flag + reputation. */
