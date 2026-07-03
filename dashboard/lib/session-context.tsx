@@ -34,6 +34,18 @@ export interface SessionContextValue {
   role: Role;
   setRole: (r: Role) => void;
 
+  /** True once the user has picked a role for the connected wallet. */
+  hasChosenRole: boolean;
+  /** Record the pick for a wallet (persists per-address) + set role + mark chosen. */
+  chooseRole: (address: string, r: Role) => void;
+  /** Reconcile hasChosenRole/role for the connected wallet (call on connect):
+   *  an on-chain role wins; else a per-wallet stored pick; else unbound. */
+  syncChosen: (address: string | null, onchainRole: Role | null) => void;
+
+  /** The connected wallet's active on-chain service count — gates role switching. */
+  activeCount: number;
+  setActiveCount: (n: number) => void;
+
   currentShipmentId: number | null;
   setCurrentShipmentId: (id: number | null) => void;
   shipment: ShipmentView | null;
@@ -63,10 +75,14 @@ export function useSession(): SessionContextValue {
 const SHIPMENT_KEY = "aegis-demo-shipment";
 const ROLE_KEY = "aegis-demo-role";
 const destKey = (id: number) => `aegis-demo-dest-${id}`;
+/** Per-wallet "has picked a role" marker (stores the chosen role). */
+const chosenKey = (address: string) => `aegis-role-chosen-${address}`;
 const VALID_ROLES: readonly Role[] = ["merchant", "carrier", "recipient", "auditor"];
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [role, setRoleState] = useState<Role>("merchant");
+  const [hasChosenRole, setHasChosenRole] = useState(false);
+  const [activeCount, setActiveCount] = useState(0);
   const [currentShipmentId, setShipmentIdState] = useState<number | null>(null);
   const [shipment, setShipment] = useState<ShipmentView | null>(null);
   const [shipmentLoading, setShipmentLoading] = useState(false);
@@ -97,6 +113,56 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       /* ignore */
     }
   }, []);
+
+  // Record the wallet's role pick (client-side; the contract auto-binds on the
+  // first create/accept). Persists per-address so the modal stays dismissed.
+  const chooseRole = useCallback(
+    (address: string, r: Role) => {
+      setRole(r);
+      setHasChosenRole(true);
+      try {
+        window.localStorage.setItem(chosenKey(address), r);
+      } catch {
+        /* ignore */
+      }
+    },
+    [setRole],
+  );
+
+  // Reconcile chosen-role state for the connected wallet: an on-chain-bound role
+  // is authoritative; else fall back to a per-wallet stored pick; else unbound
+  // (the modal will prompt).
+  const syncChosen = useCallback(
+    (address: string | null, onchainRole: Role | null) => {
+      if (!address) {
+        setHasChosenRole(false);
+        return;
+      }
+      if (onchainRole) {
+        setRole(onchainRole);
+        setHasChosenRole(true);
+        try {
+          window.localStorage.setItem(chosenKey(address), onchainRole);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      let stored: string | null = null;
+      try {
+        stored = window.localStorage.getItem(chosenKey(address));
+      } catch {
+        /* ignore */
+      }
+      if (stored && (VALID_ROLES as readonly string[]).includes(stored)) {
+        setRole(stored as Role);
+        setHasChosenRole(true);
+      } else {
+        setHasChosenRole(false);
+      }
+    },
+    [setRole],
+  );
 
   const setCurrentShipmentId = useCallback((id: number | null) => {
     setShipmentIdState(id);
@@ -156,6 +222,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     () => ({
       role,
       setRole,
+      hasChosenRole,
+      chooseRole,
+      syncChosen,
+      activeCount,
+      setActiveCount,
       currentShipmentId,
       setCurrentShipmentId,
       shipment,
@@ -170,6 +241,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [
       role,
       setRole,
+      hasChosenRole,
+      chooseRole,
+      syncChosen,
+      activeCount,
       currentShipmentId,
       setCurrentShipmentId,
       shipment,

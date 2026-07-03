@@ -4,7 +4,7 @@
 "use client";
 import type {
   ShipmentView, ActionResult, BuildTxReq, BuildTxRes, SubmitTxReq, SubmitTxRes,
-  VerifyRes, FlyRes, SignPodReq, AuditRes, ShipmentReq,
+  VerifyRes, FlyRes, SignPodReq, AuditRes, ShipmentReq, RoleInfo,
 } from "./types";
 
 async function post<T>(path: string, body: unknown): Promise<ActionResult<T>> {
@@ -41,4 +41,5 @@ export const api = {
   signPod:      (b: SignPodReq)   => post<{ signed: boolean }>("/api/recipient-pod", b),
   audit:        (b: ShipmentReq)  => post<AuditRes>("/api/confidential/audit", b),
   shipment:     (id: number)      => get<ShipmentView>(`/api/shipment/${id}`),
+  roleInfo:     (address: string) => get<RoleInfo>(`/api/role?address=${encodeURIComponent(address)}`),
 };

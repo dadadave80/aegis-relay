@@ -209,6 +209,52 @@ export async function readShipmentRaw(id: number | string): Promise<StatusResult
   }
 }
 
+/**
+ * Read the wallet's on-chain role binding + active service count from the
+ * registry (plan 001 entrypoints). `role_of(addr)` returns `Option<Role>` — a
+ * u32-tagged unit enum (`0 → "merchant"`, `1 → "carrier"`) or None (`scvVoid`
+ * → null) when the wallet has never bound a role. `active_count(addr)` returns
+ * a u32. On any read error, degrade to `{ role: null, activeCount: 0 }` so the
+ * modal/switcher treat the wallet as unbound rather than crash.
+ */
+export async function readRole(
+  address: string,
+): Promise<{ role: string | null; activeCount: number }> {
+  try {
+    const s = server();
+    const acct = new Account(DUMMY_PK, "0");
+    const c = new Contract(REGISTRY_ID);
+
+    const build = (fn: string) =>
+      new TransactionBuilder(acct, {
+        fee: "100",
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
+        .addOperation(c.call(fn, scAddr(address)))
+        .setTimeout(30)
+        .build();
+
+    let role: string | null = null;
+    const roleSim = await s.simulateTransaction(build("role_of"));
+    if (!rpc.Api.isSimulationError(roleSim) && roleSim.result?.retval) {
+      const native = scValToNative(roleSim.result.retval);
+      if (native === 0 || native === 0n) role = "merchant";
+      else if (native === 1 || native === 1n) role = "carrier";
+      // null/None or any unexpected value → leave role unbound (null)
+    }
+
+    let activeCount = 0;
+    const countSim = await s.simulateTransaction(build("active_count"));
+    if (!rpc.Api.isSimulationError(countSim) && countSim.result?.retval) {
+      activeCount = Number(scValToNative(countSim.result.retval)) || 0;
+    }
+
+    return { role, activeCount };
+  } catch {
+    return { role: null, activeCount: 0 };
+  }
+}
+
 /** Native XLM balance (as a decimal XLM string) via a ledger-entry read. */
 export async function nativeBalanceXlm(address: string): Promise<string | null> {
   try {

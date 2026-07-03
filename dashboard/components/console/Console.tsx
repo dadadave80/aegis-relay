@@ -1,24 +1,56 @@
 "use client";
 
 /**
- * Console orchestrator. Gates on wallet connection (connect screen ↔ console).
- * Once a Stellar wallet is connected it lays out the top bar, role switcher,
- * per-role action panel and the persistent lifecycle board. The connected
- * wallet signs every on-chain action — no relayer.
+ * Console orchestrator. Gates on wallet connection (connect screen ↔ console),
+ * then on a first-connect role pick. Once a Stellar wallet is connected it reads
+ * the wallet's on-chain role binding + active service count (plan 001) and either
+ * prompts a role via <RoleModal> (first connect) or lays out the top bar, role
+ * switcher, per-role action panel and the persistent lifecycle board. The
+ * connected wallet signs every on-chain action — no relayer.
  */
 
+import { useEffect, useState } from "react";
 import { useWallet } from "@/lib/wallet-context";
 import { useSession } from "@/lib/session-context";
+import { api } from "@/lib/api";
 import LoginScreen from "./LoginScreen";
 import TopBar from "./TopBar";
 import RoleSwitcher from "./RoleSwitcher";
 import LifecycleBoard from "./LifecycleBoard";
 import ActionPanel from "./RolePanels";
+import RoleModal from "./RoleModal";
 import { Spinner } from "./primitives";
 
 export default function Console() {
   const { ready, stellarAddress } = useWallet();
-  const { role } = useSession();
+  const { role, hasChosenRole, chooseRole, syncChosen, setActiveCount, shipment } =
+    useSession();
+  // Which address we have finished reading role info for — gates the modal so it
+  // never flashes for a wallet that already has a (client- or chain-) role.
+  const [checkedFor, setCheckedFor] = useState<string | null>(null);
+
+  // Read role_of + active_count for the connected wallet on connect and after
+  // every lifecycle mutation (`shipment` changes when an action re-reads chain
+  // state), so the modal reflects an already-bound role and the switcher gate
+  // unlocks promptly once a shipment reaches a terminal state.
+  useEffect(() => {
+    if (!stellarAddress) return;
+    let cancelled = false;
+    void (async () => {
+      const res = await api.roleInfo(stellarAddress);
+      if (cancelled) return;
+      if (res.ok && res.data) {
+        syncChosen(stellarAddress, res.data.role);
+        setActiveCount(res.data.activeCount);
+      } else {
+        syncChosen(stellarAddress, null);
+      }
+      setCheckedFor(stellarAddress);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [stellarAddress, shipment, syncChosen, setActiveCount]);
 
   if (!ready) {
     return (
@@ -29,6 +61,20 @@ export default function Console() {
   }
 
   if (!stellarAddress) return <LoginScreen />;
+
+  // Wallet connected but the first role read for it is still in flight — hold a
+  // spinner rather than flash the modal at a wallet that has already chosen.
+  if (checkedFor !== stellarAddress && !hasChosenRole) {
+    return (
+      <div className="max-w-md mx-auto px-6 py-24 text-center">
+        <Spinner size={20} />
+      </div>
+    );
+  }
+
+  if (!hasChosenRole) {
+    return <RoleModal onPick={(r) => chooseRole(stellarAddress, r)} />;
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">

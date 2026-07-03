@@ -94,6 +94,11 @@ export interface CreateParams {
 
 export interface ShipmentReq { shipmentId: number; }
 
+/** The wallet's on-chain role binding + active service count (GET /api/role).
+ * `role` is the on-chain-bound role or null (only merchant/carrier ever bind on
+ * chain; recipient/auditor never do). `activeCount` gates role switching. */
+export interface RoleInfo { role: Role | null; activeCount: number; }
+
 export interface VerifyRes { match: boolean; cs: string; onchainCs: string; }
 
 export interface FlyRes {
