@@ -144,4 +144,17 @@ function makeVercelKv(): Kv {
   };
 }
 
+// Vercel's Upstash / Marketplace Redis integration sometimes injects the store
+// credentials under UPSTASH_REDIS_REST_* names instead of the @vercel/kv
+// KV_REST_API_* names this module (and @vercel/kv) read. Bridge them so a store
+// connected under either naming convention is picked up.
+if (
+  !process.env.KV_REST_API_URL &&
+  process.env.UPSTASH_REDIS_REST_URL &&
+  process.env.UPSTASH_REDIS_REST_TOKEN
+) {
+  process.env.KV_REST_API_URL = process.env.UPSTASH_REDIS_REST_URL;
+  process.env.KV_REST_API_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+}
+
 export const kv: Kv = shouldUseVercelKv() ? makeVercelKv() : makeMemoryKv();
