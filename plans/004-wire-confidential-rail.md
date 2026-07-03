@@ -242,7 +242,56 @@ toolchain you can install, or if `set_ct_token` returns `AlreadySet` (means the 
 registry was already pinned — read `ct_token` and reuse that token instead of
 deploying a second one).
 
-### Phase A — Server confidential module (`dashboard/lib/server/confidential.ts`)
+### Phase A′ (SPIKE, do first) — prove browser UltraHonk works in OUR build
+
+**Risk this de-risks:** the upstream demo runs bb.js UltraHonk proving in the
+browser via a **webpack** config (`ct-demo/packages/app/next.config.mjs`:
+`@aztec/bb.js` client alias false, `asyncWebAssembly`, `transpilePackages:
+["@ctd/sdk"]`, COOP/COEP headers, bb.js vendored to `public/vendor/bb/` and
+loaded as native ESM by `lib/bb-loader.ts`). **Our dashboard builds with
+Turbopack** (`next build`/`dev` default in Next 16), where that webpack config
+does not apply. Before building the whole rail, confirm the proving stack works
+in our build — or discover it doesn't and fall back to server-side proving.
+
+Steps:
+1. Add `@ctd/sdk` to `dashboard/package.json` (`file:../../ct-demo/packages/sdk`),
+   `bun install`. STOP if it can't resolve the `@stellar/stellar-sdk` peer (13↔16).
+2. Port `lib/bb-loader.ts` + the `scripts/vendor-bb.mjs` vendoring (bb.js →
+   `dashboard/public/vendor/bb/`) and add the COOP/COEP headers + any Turbopack/
+   webpack config the dashboard needs (`dashboard/next.config.ts`).
+3. A throwaway `/console` client action that derives a key from `kit.signMessage`
+   and generates ONE UltraHonk register proof in the browser, logging success.
+4. `bun run build` exit 0 AND the proof generates in a real browser (or headless).
+
+**STOP and report** if bb.js proving cannot be made to run in the dashboard's
+Next 16 / Turbopack build after a reasonable effort. The documented fallback is
+**server-side proving** (run `@ctd/sdk` proving in a Node API route with a key
+derived from the wallet's `signMessage` sent to the server for that request only)
+— a design change the reviewer must approve, not an improvisation. Do not proceed
+to Phase A/B/C/D until this spike is green (or the fallback is chosen).
+
+### Phase A — Confidential client module (browser `@ctd/sdk`, wallet-driven)
+
+**Design: client-side (see "The design" section).** Port the demo's client
+helpers, adapting Freighter → Stellar Wallets Kit:
+- `dashboard/lib/confidential/derive-key.ts` — port `ct-demo/packages/app/lib/
+  derive-key.ts` verbatim (`keyDerivationMessage`, `skFromSignature`).
+- `dashboard/lib/confidential/wallet-signer.ts` — the kit adapter (replaces the
+  demo's `lib/freighter.ts`): `{ publicKey, sign(xdr)=kit.signTransaction,
+  signMessage(msg)=kit.signMessage }`. **Gate: require the connected wallet to be
+  Freighter** (deterministic ed25519 `signMessage`); disable the confidential rail
+  otherwise, with a note.
+- `dashboard/lib/confidential/wallet.ts` — a browser confidential wallet wrapping
+  `@ctd/sdk` `ChainClient` (contracts = the re-pinned CT ids from artifacts/config)
+  + `StateEngine` (browser store, e.g. IndexedDB/localStorage) + the derived key:
+  `register/deposit/merge/transferTo(E, amount)` (ports `packages/app/app/wallet/
+  page.tsx`'s `w.*` flow). Escrow `E`: client-generate a fresh Stellar keypair +
+  Grumpkin key per shipment, keep in the packet/mailbox; `settle(E→payout)` after
+  Delivered.
+(The former server-module text is retained below only for the settle/audit reads
+that CAN stay server-side; the merchant confidential ops are client-side per above.)
+
+### Phase A(server-side reads, optional) — audit decrypt
 
 1. Add `@ctd/sdk` to `dashboard/package.json`:
    `"@ctd/sdk": "file:../../ct-demo/packages/sdk"` (same as prover). Run
