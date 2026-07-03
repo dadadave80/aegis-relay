@@ -13,6 +13,7 @@
  * against the challenge's UTF-8 bytes via `Keypair.verify`.
  */
 import { Keypair } from "@stellar/stellar-sdk";
+import { createHash } from "crypto";
 
 /**
  * Deterministic per-shipment challenge string, derived from stored fields
@@ -39,7 +40,15 @@ export function verifyWalletSignature(
     const kp = Keypair.fromPublicKey(address);
     const sig = Buffer.from(signatureB64, "base64");
     if (sig.length === 0) return false;
-    return kp.verify(Buffer.from(message, "utf8"), sig);
+    const raw = Buffer.from(message, "utf8");
+    // Wallets differ: some sign the raw message bytes, others apply the SEP-53
+    // preamble (sign SHA-256 of "Stellar Signed Message:\n" ‖ message). Accept
+    // either so the recipient's signature verifies regardless of the wallet.
+    if (kp.verify(raw, sig)) return true;
+    const sep53 = createHash("sha256")
+      .update(Buffer.concat([Buffer.from("Stellar Signed Message:\n", "utf8"), raw]))
+      .digest();
+    return kp.verify(sep53, sig);
   } catch {
     return false;
   }
