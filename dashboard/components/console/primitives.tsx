@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * Small, shared building blocks for the console — spinners, action
- * buttons with loading/step labels, inline error cards, form fields and a
- * segmented control. All styling matches the existing dark / mint system in
- * app/globals.css (Tailwind for layout, CSS vars for colour).
+ * Small, shared building blocks for the console — spinners, action buttons with
+ * loading/step labels, inline error cards, form fields and a segmented control.
+ * Styled in the Two-Worlds design language (Aegis Relay Design System): violet
+ * --seal owns primary verbs, sharp 4px control radii, STAMP labels, hairline
+ * borders. Signatures are unchanged so every station composes them as before.
  */
 
 import type { ButtonHTMLAttributes, ReactNode } from "react";
@@ -26,17 +27,10 @@ export function Spinner({ size = 14 }: { size?: number }) {
   );
 }
 
-// ── Section label ──────────────────────────────────────────────────────────
+// ── Section label — STAMP ────────────────────────────────────────────────────
 
 export function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <p
-      className="text-xs uppercase tracking-wider"
-      style={{ color: "var(--text-faint)" }}
-    >
-      {children}
-    </p>
-  );
+  return <p className="stamp" style={{ color: "var(--ink-dim)" }}>{children}</p>;
 }
 
 // ── Action button ────────────────────────────────────────────────────────────
@@ -44,21 +38,16 @@ export function SectionLabel({ children }: { children: ReactNode }) {
 type Variant = "primary" | "danger" | "ghost";
 
 const VARIANT: Record<Variant, React.CSSProperties> = {
-  primary: { background: "var(--mint)", color: "var(--on-mint)" },
+  primary: { background: "var(--seal)", color: "#0B0716", border: "1px solid transparent" },
   danger: {
-    background: "color-mix(in srgb, var(--red) 12%, transparent)",
-    color: "var(--red)",
-    border: "1px solid color-mix(in srgb, var(--red) 45%, transparent)",
+    background: "rgba(255,92,92,0.12)",
+    color: "var(--danger)",
+    border: "1px solid rgba(255,92,92,0.45)",
   },
-  ghost: {
-    background: "var(--surface)",
-    color: "var(--text)",
-    border: "1px solid var(--border)",
-  },
+  ghost: { background: "var(--void-1)", color: "var(--ink)", border: "1px solid var(--hairline)" },
 };
 
-interface ActionButtonProps
-  extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
+interface ActionButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
   children: ReactNode;
   loading?: boolean;
   loadingLabel?: string;
@@ -82,9 +71,9 @@ export function ActionButton({
       disabled={isDisabled}
       aria-busy={loading}
       className={
-        "inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 " +
-        "text-sm font-semibold min-h-[40px] transition-[transform,opacity] " +
-        "active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-45 " +
+        "inline-flex items-center justify-center gap-2 rounded-[var(--r-control)] px-[18px] py-2.5 " +
+        "text-sm font-semibold min-h-[44px] transition-[transform,opacity] " +
+        "active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 " +
         "enabled:hover:opacity-90 " +
         className
       }
@@ -96,7 +85,7 @@ export function ActionButton({
   );
 }
 
-// ── Inline error / notice cards ──────────────────────────────────────────────
+// ── Inline error / notice cards — instrument voice ───────────────────────────
 
 export function InlineError({
   title = "Something went wrong",
@@ -108,13 +97,11 @@ export function InlineError({
   return (
     <div
       role="alert"
-      className="card p-4 text-sm"
-      style={{ borderColor: "color-mix(in srgb, var(--red) 45%, transparent)" }}
+      className="panel p-4 text-sm"
+      style={{ borderColor: "rgba(255,92,92,0.45)" }}
     >
-      <p className="font-semibold" style={{ color: "var(--red)" }}>
-        {title}
-      </p>
-      <p className="mt-1 break-words" style={{ color: "var(--text-dim)" }}>
+      <p className="font-semibold" style={{ color: "var(--danger)" }}>{title}</p>
+      <p className="mono mt-1 break-words" style={{ color: "var(--ink-dim)", fontSize: "var(--text-xs)" }}>
         {detail}
       </p>
     </div>
@@ -123,16 +110,9 @@ export function InlineError({
 
 export function Honesty({ children }: { children: ReactNode }) {
   return (
-    <p
-      className="text-xs leading-relaxed flex items-start gap-2"
-      style={{ color: "var(--amber)" }}
-    >
-      <span aria-hidden className="mt-px">
-        ⚠
-      </span>
-      <span style={{ color: "color-mix(in srgb, var(--amber) 82%, var(--text-dim))" }}>
-        {children}
-      </span>
+    <p className="honesty" style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: 0 }}>
+      <span aria-hidden style={{ fontStyle: "normal" }}>⚠</span>
+      <span>{children}</span>
     </p>
   );
 }
@@ -150,35 +130,26 @@ export function Field({
 }) {
   return (
     <label className="block">
-      <span
-        className="text-xs uppercase tracking-wider"
-        style={{ color: "var(--text-faint)" }}
-      >
-        {label}
-      </span>
+      <span className="stamp" style={{ color: "var(--ink-dim)" }}>{label}</span>
       <div className="mt-1.5">{children}</div>
       {hint && (
-        <span className="text-xs mt-1 block" style={{ color: "var(--text-faint)" }}>
-          {hint}
-        </span>
+        <span className="mt-1 block" style={{ color: "var(--ink-dim)", fontSize: "var(--text-xs)" }}>{hint}</span>
       )}
     </label>
   );
 }
 
-export function TextInput(
-  props: React.InputHTMLAttributes<HTMLInputElement>,
-) {
+export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   const { className = "", ...rest } = props;
   return (
     <input
       {...rest}
       className={
-        "mono w-full min-w-0 rounded-lg px-3 py-2.5 text-sm outline-none border " +
-        "hairline focus:border-[var(--mint)] transition-colors " +
+        "mono w-full min-w-0 rounded-[var(--r-control)] px-3 py-2.5 text-sm outline-none border " +
+        "hairline transition-colors focus:[border-color:var(--seal)] " +
         className
       }
-      style={{ background: "var(--bg)", color: "var(--text)" }}
+      style={{ background: "var(--void-0)", color: "var(--ink)" }}
     />
   );
 }
@@ -192,7 +163,7 @@ export function Segmented<T extends string>({
   size = "md",
 }: {
   value: T;
-  options: { value: T; label: string; glyph?: string }[];
+  options: { value: T; label: string; glyph?: ReactNode }[];
   onChange: (v: T) => void;
   size?: "sm" | "md";
 }) {
@@ -200,8 +171,8 @@ export function Segmented<T extends string>({
   return (
     <div
       role="tablist"
-      className="inline-flex flex-wrap gap-1 rounded-xl p-1"
-      style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
+      className="inline-flex flex-wrap gap-1 rounded-[var(--r-panel)] p-1"
+      style={{ background: "var(--void-0)", border: "1px solid var(--hairline)" }}
     >
       {options.map((o) => {
         const active = o.value === value;
@@ -212,14 +183,14 @@ export function Segmented<T extends string>({
             aria-selected={active}
             onClick={() => onChange(o.value)}
             className={
-              "rounded-lg font-medium min-h-[36px] transition-[transform,background,color] " +
-              "active:scale-[0.96] inline-flex items-center gap-1.5 " +
+              "rounded-[var(--r-control)] font-medium min-h-[36px] transition-[transform,background,color] " +
+              "active:scale-[0.98] inline-flex items-center gap-1.5 " +
               pad
             }
             style={
               active
-                ? { background: "var(--mint)", color: "var(--on-mint)" }
-                : { background: "transparent", color: "var(--text-dim)" }
+                ? { background: "rgba(139,124,255,0.16)", color: "var(--seal)", border: "1px solid rgba(139,124,255,0.5)" }
+                : { background: "transparent", color: "var(--ink-dim)", border: "1px solid transparent" }
             }
           >
             {o.glyph && <span aria-hidden>{o.glyph}</span>}

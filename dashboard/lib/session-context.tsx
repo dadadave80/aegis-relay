@@ -46,6 +46,10 @@ export interface SessionContextValue {
   activeCount: number;
   setActiveCount: (n: number) => void;
 
+  /** Ledger Lens — when on, private data renders as the chain sees it. Key `L`. */
+  lens: boolean;
+  toggleLens: () => void;
+
   currentShipmentId: number | null;
   setCurrentShipmentId: (id: number | null) => void;
   shipment: ShipmentView | null;
@@ -83,6 +87,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [role, setRoleState] = useState<Role>("merchant");
   const [hasChosenRole, setHasChosenRole] = useState(false);
   const [activeCount, setActiveCount] = useState(0);
+  const [lens, setLens] = useState(false);
+  const toggleLens = useCallback(() => setLens((v) => !v), []);
   const [currentShipmentId, setShipmentIdState] = useState<number | null>(null);
   const [shipment, setShipment] = useState<ShipmentView | null>(null);
   const [shipmentLoading, setShipmentLoading] = useState(false);
@@ -227,6 +233,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       syncChosen,
       activeCount,
       setActiveCount,
+      lens,
+      toggleLens,
       currentShipmentId,
       setCurrentShipmentId,
       shipment,
@@ -245,6 +253,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       chooseRole,
       syncChosen,
       activeCount,
+      lens,
+      toggleLens,
       currentShipmentId,
       setCurrentShipmentId,
       shipment,

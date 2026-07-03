@@ -23,8 +23,22 @@ import { Spinner } from "./primitives";
 
 export default function Console() {
   const { ready, stellarAddress } = useWallet();
-  const { role, hasChosenRole, chooseRole, syncChosen, setActiveCount, shipment } =
+  const { role, hasChosenRole, chooseRole, syncChosen, setActiveCount, shipment, toggleLens } =
     useSession();
+
+  // Ledger Lens — key `L` re-renders the console as the chain sees it. Ignored
+  // while typing in a field so it never fights text entry.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "l" && e.key !== "L") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      toggleLens();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleLens]);
   // Which address we have finished reading role info for — gates the modal so it
   // never flashes for a wallet that already has a (client- or chain-) role.
   const [checkedFor, setCheckedFor] = useState<string | null>(null);
