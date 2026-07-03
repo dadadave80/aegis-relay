@@ -2,7 +2,12 @@
 
 **Privacy-preserving supply-chain custody & delivery settlement on Stellar — with drone delivery as a ZK-verified transport mode.**
 
-[![CI](https://github.com/dadadave80/aegis-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/dadadave80/aegis-relay/actions/workflows/ci.yml) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/dadadave80/aegis-relay) [![Watch the demo](https://img.shields.io/badge/▶_Watch_Demo-red?logo=youtube&logoColor=white)](https://youtu.be/SfVsJ42_iVI) [![Live app](https://img.shields.io/badge/Live_App-000?logo=vercel&logoColor=white)](https://aegis-zk-relay.vercel.app)
+<p align="center">
+  <a href="https://github.com/dadadave80/aegis-relay/actions/workflows/ci.yml"><img src="https://github.com/dadadave80/aegis-relay/actions/workflows/ci.yml/badge.svg" alt="CI"></a>&nbsp;&nbsp;
+  <a href="https://deepwiki.com/dadadave80/aegis-relay"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>&nbsp;&nbsp;
+  <a href="https://youtu.be/SfVsJ42_iVI"><img src="https://img.shields.io/badge/▶_Watch_Demo-red?logo=youtube&amp;logoColor=white" alt="Watch the demo"></a>&nbsp;&nbsp;
+  <a href="https://aegis-zk-relay.vercel.app"><img src="https://img.shields.io/badge/Live_App-000?logo=vercel&amp;logoColor=white" alt="Live app"></a>
+</p>
 
 Global freight runs on data nobody wants to share: what is being shipped, what it is worth, who is receiving it, where they live, and which route it travels. Every one of those disclosures is an attack surface — theft targets manifests, competitors mine shipping graphs, and a published drone corridor is an interception map.
 
