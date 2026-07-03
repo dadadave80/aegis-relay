@@ -69,7 +69,11 @@ import type {
   PodSignReq,
   Listing,
   MarketClaimResult,
+  CarrierStatus,
+  Reputation,
 } from "../types";
+import { ensureCredentialed, isValidStellarAddress } from "../carrier-gate";
+export { NotCredentialedError } from "../carrier-gate"; // re-export for routes + Task 5
 import { buildListing } from "../listing";
 import { decideClaim } from "../market/claim-gate";
 
@@ -80,8 +84,15 @@ export function ok<T>(data: T): { ok: true; data: T } {
 }
 export function fail(e: unknown): { ok: false; error: string; errorCode?: string } {
   const error = e instanceof Error ? e.message : String(e);
+  // Prefer an explicit `errorCode` tag on the thrown error (e.g. NotCredentialedError
+  // → "NOT_CREDENTIALED", so the client can render the onboarding prompt); otherwise
+  // fall back to a parsed Soroban `Error(Contract, #n)` code.
+  const tagged =
+    e && typeof e === "object" && "errorCode" in e
+      ? String((e as { errorCode: unknown }).errorCode)
+      : undefined;
   const m = /#(\d+)\b/.exec(error);
-  return { ok: false, error, errorCode: m ? `Error(Contract, #${m[1]})` : undefined };
+  return { ok: false, error, errorCode: tagged ?? (m ? `Error(Contract, #${m[1]})` : undefined) };
 }
 
 // ── small decoders (mirror lib/contract.ts) ──────────────────────────────────
@@ -817,4 +828,53 @@ export async function marketClaimFlow(
     throw new Error(`no stored packet for shipment ${shipmentId} — create it via this server first`);
   }
   return decideClaim(true, () => rec.packet);
+}
+
+// ── carrier onboarding + credential gate (Spec 1 marketplace) ────────────────
+
+/**
+ * Gate for the /market claim path (Task 5 marketClaimFlow): throw
+ * NotCredentialedError unless `address` is a credentialed carrier in the shared
+ * store. The route catches it and `fail()` tags errorCode="NOT_CREDENTIALED" so
+ * the client shows a "Become a carrier" prompt (spec §12) rather than the packet.
+ */
+export async function assertCarrierCredentialed(address: string): Promise<void> {
+  ensureCredentialed(address, await store.getCarrier(address));
+}
+
+/**
+ * Onboard a carrier: mark `address` credentialed so it can claim from /market.
+ * Idempotent — re-onboarding a credentialed carrier preserves its onboardedAt.
+ *
+ * PONYTAIL — demo shortcut, stated honestly. A REAL credential issuance builds
+ * the depth-10 credential tree with this carrier's leaf
+ *   leaf = Poseidon(DOM_CRED, pk_x, pk_y, class, payload_limit_g, expiry_ts)   (DESIGN §6.3)
+ * and publishes the new epoch root via aegis-credentials `set_root(root, epoch)`,
+ * which is gated by `issuer.require_auth()` (DESIGN §10.3). This server holds NO
+ * Stellar signing key — least of all the issuer's — so it CANNOT sign that tx;
+ * spec §13 flags this exact "credential issuance needs an admin/authorized
+ * signer" risk. For the demo we record credentialed=true in the shared store and
+ * leave the on-chain root untouched. `accept` still succeeds because plan-001
+ * `accept` takes the A3 credential proof as OPTIONAL (DESIGN §8.2: "Without A3,
+ * accept is an authorized plain call"). Real issuance is roadmap: an
+ * issuer-key-holding service publishes the root out-of-band.
+ */
+export async function onboardCarrierFlow(address: string): Promise<CarrierStatus> {
+  if (!isValidStellarAddress(address)) throw new Error("invalid Stellar address");
+  const existing = await store.getCarrier(address);
+  if (existing.credentialed) return existing; // idempotent — keep original onboardedAt
+  await store.setCarrierCredentialed(address, Math.floor(Date.now() / 1000));
+  return store.getCarrier(address);
+}
+
+/** Carrier status for GET /api/carrier/<address>: credential flag + reputation. */
+export async function carrierStatusFlow(
+  address: string,
+): Promise<{ credentialed: boolean; onboardedAt?: number; reputation: Reputation }> {
+  if (!isValidStellarAddress(address)) throw new Error("invalid Stellar address");
+  const [status, reputation] = await Promise.all([
+    store.getCarrier(address),
+    store.getRep(address),
+  ]);
+  return { credentialed: status.credentialed, onboardedAt: status.onboardedAt, reputation };
 }

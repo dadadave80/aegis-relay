@@ -207,6 +207,11 @@ export interface Reputation {
   expired: number;
 }
 
+/** GET /api/carrier/<address> — credential status + reputation (Task 8). */
+export interface CarrierStatusRes extends CarrierStatus {
+  reputation: Reputation;
+}
+
 /** POST /api/market — credential-gated packet claim. */
 export interface MarketClaimReq { shipmentId: number; }
 export interface MarketClaimRes { packet: unknown; }

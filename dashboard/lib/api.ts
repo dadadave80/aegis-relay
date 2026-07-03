@@ -6,6 +6,7 @@ import type {
   ShipmentView, ActionResult, BuildTxReq, BuildTxRes, SubmitTxReq, SubmitTxRes,
   VerifyRes, FlyInputRes, ProveInputRes, AuditRes, ShipmentReq, RoleInfo,
   Listing, MarketClaimResult, ClaimContext, PodSignReq,
+  CarrierStatus, CarrierStatusRes,
 } from "./types";
 
 async function post<T>(path: string, body: unknown): Promise<ActionResult<T>> {
@@ -56,5 +57,10 @@ export const api = {
     list:  ()                                    => get<Listing[]>("/api/market"),
     claim: (shipmentId: number, address: string) =>
              post<MarketClaimResult>("/api/market", { shipmentId, address }),
+  },
+  // carrier onboarding + credential-gate status read (Task 8)
+  carrier: {
+    onboard: (address: string) => post<CarrierStatus>("/api/carrier/onboard", { address }),
+    status:  (address: string) => get<CarrierStatusRes>(`/api/carrier/${encodeURIComponent(address)}`),
   },
 };

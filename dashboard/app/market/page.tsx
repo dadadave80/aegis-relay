@@ -85,6 +85,11 @@ function MarketBoard() {
   const [error, setError] = useState<string | null>(null);
   const [claiming, setClaiming] = useState<number | null>(null);
   const [onboardCta, setOnboardCta] = useState<OnboardCta | null>(null);
+  // The board CTA's own href (/market?onboard=1, lib/market/claim-gate.ts) — a
+  // direct link/bookmark to that URL should surface the same onboarding panel
+  // even before anyone has attempted (and failed) a claim on this page.
+  const [onboardEntry, setOnboardEntry] = useState(false);
+  const [onboarding, setOnboarding] = useState(false);
   const [filters, setFilters] = useState<BoardFilters>({ ...EMPTY_FILTERS });
   // `Date.now()` is impure (react-hooks/purity), so "now" lives in state,
   // refreshed only from inside the poll effect below — never read at render time.
@@ -133,10 +138,43 @@ function MarketBoard() {
     };
   }, [toast]);
 
+  // Mount-time hydration from the URL query (SSR default is "no panel", then
+  // synced client-side) — same pattern as app/claim/[id]/page.tsx's fragment read.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  // One-shot read of the `?onboard=1` entry point (lib/market/claim-gate.ts
+  // CARRIER_ONBOARD_CTA.href), so following that link straight to /market opens
+  // the onboarding panel without requiring a failed claim first.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("onboard") === "1") {
+      setOnboardEntry(true);
+    }
+  }, []);
+
   const rows = useMemo(
     () => filterListings(listings, filters, nowSec).sort((a, b) => b.createdAt - a.createdAt),
     [listings, filters, nowSec],
   );
+
+  const onOnboard = useCallback(async () => {
+    if (!stellarAddress) {
+      toast({ tone: "amber", title: "Connect a wallet first", detail: "Onboarding credentials this specific wallet address." });
+      return;
+    }
+    setOnboarding(true);
+    try {
+      const res = await api.carrier.onboard(stellarAddress);
+      if (!res.ok || !res.data) {
+        toast({ tone: "red", title: "Couldn't onboard", detail: res.error ?? "Try again." });
+        return;
+      }
+      setOnboardCta(null);
+      setOnboardEntry(false);
+      if (window.location.search.includes("onboard=1")) router.replace("/market");
+      toast({ tone: "mint", title: "You're a credentialed carrier", detail: "Claim a shipment below to get started." });
+    } finally {
+      setOnboarding(false);
+    }
+  }, [stellarAddress, router, toast]);
 
   const onClaim = useCallback(
     async (id: number) => {
@@ -213,17 +251,30 @@ function MarketBoard() {
         packet and accept custody first-come.
       </p>
 
-      {onboardCta && (
+      {(onboardCta || onboardEntry) && (
         <div className="panel-cold" style={{ padding: 16, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", borderColor: "rgba(240,180,76,0.4)" }}>
           <div>
-            <Stamp tone="caution">{onboardCta.title}</Stamp>
+            <Stamp tone="caution">{onboardCta?.title ?? "Become a carrier"}</Stamp>
             <p style={{ margin: "4px 0 0", fontSize: "var(--text-sm)", color: "var(--ink-dim)" }}>
-              Only credentialed carriers can pull a packet and accept custody.
+              {stellarAddress
+                ? "Only credentialed carriers can pull a packet and accept custody. This onboards the connected wallet."
+                : "Connect a wallet, then onboard it to pull packets and accept custody."}
             </p>
           </div>
-          <Link href={onboardCta.href} style={{ textDecoration: "none" }}>
-            <Button variant="seal">{onboardCta.cta}</Button>
-          </Link>
+          {stellarAddress ? (
+            <Button
+              variant="seal"
+              loading={onboarding}
+              loadingLabel="Onboarding…"
+              onClick={() => void onOnboard()}
+            >
+              {onboardCta?.cta ?? "Get credentialed"}
+            </Button>
+          ) : (
+            <Button variant="ghost" loading={connecting} loadingLabel="Connecting…" onClick={() => void connect()}>
+              Connect wallet
+            </Button>
+          )}
         </div>
       )}
 
