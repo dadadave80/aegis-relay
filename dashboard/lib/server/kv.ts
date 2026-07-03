@@ -158,3 +158,8 @@ if (
 }
 
 export const kv: Kv = shouldUseVercelKv() ? makeVercelKv() : makeMemoryKv();
+
+/** Which backend `kv` is bound to — surfaced by /api/health. */
+export function kvBackend(): "vercel-kv" | "memory" {
+  return shouldUseVercelKv() ? "vercel-kv" : "memory";
+}
