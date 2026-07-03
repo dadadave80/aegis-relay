@@ -82,6 +82,28 @@ export interface ActionResult<T = unknown> {
 
 // ── Request payloads (POST bodies) ──────────────────────────────────────────
 
+/**
+ * Per-shipment confidential escrow packet — E's keys + the funds' decryption
+ * handle. Generated in the BROWSER (lib/confidential/wallet.ts), persisted in
+ * the SERVER mailbox (store.ts, gitignored), NEVER committed. Shared shape so
+ * the browser can round-trip it through the create/settle flow. Mirrors the
+ * CLI's escrow.json (prover/src/confidential.ts EscrowFile).
+ */
+export interface EscrowRecord {
+  version: 1;
+  /** E's Stellar address (G…). */
+  escrow: string;
+  /** E's Stellar secret seed — mailbox material, never printed/committed. */
+  stellarSecret: string;
+  /** E's Grumpkin keys (sk + addrF), serialized. */
+  grumpkin: { sk: string; addrF: string };
+  /** Post-merge spendable opening of E — the funds' decryption handle. */
+  opening: { v: string; r: string };
+  token: string;
+  registry: string;
+  txs: Record<string, string>;
+}
+
 /** Merchant create form → goes into BuildTxReq.params for action:"create". */
 export interface CreateParams {
   toLat: number; toLon: number;
@@ -90,6 +112,10 @@ export interface CreateParams {
   method: Method;
   rail: Rail;
   deadlineHours?: number;             // default 24
+  /** Confidential rail only: E's address (client funds E in the browser first). */
+  escrow?: string;
+  /** Confidential rail only: E's packet, stored in the mailbox on submit. */
+  escrowRecord?: EscrowRecord;
 }
 
 export interface ShipmentReq { shipmentId: number; }
@@ -110,4 +136,13 @@ export interface FlyRes {
 
 export interface SignPodReq extends ShipmentReq { lat: number; lon: number; }
 
-export interface AuditRes { amountXlm: string; note: string; }
+export interface AuditRes {
+  amountXlm: string;
+  note: string;
+  /** Present when a live decrypt succeeded (vs the graceful fallback note). */
+  txHash?: string;
+  from?: string;
+  to?: string;
+  /** Sender + recipient auditor ciphertexts decrypt to the same amount. */
+  channelsAgree?: boolean;
+}

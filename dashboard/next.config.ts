@@ -32,8 +32,11 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@ctd/sdk"],
   // The stateless server routes reuse the prover's crypto (Poseidon/EdDSA via
   // circomlibjs) and snarkjs for Groth16 proving. Both are heavy native/ESM
-  // packages that must be required by Node at runtime, not bundled.
-  serverExternalPackages: ["snarkjs", "circomlibjs"],
+  // packages that must be required by Node at runtime, not bundled. @aztec/bb.js
+  // is here too: the server-side audit decrypt imports @ctd/sdk (whose proving
+  // module has a dynamic `import("@aztec/bb.js")`), but audit only DECRYPTS —
+  // it never proves — so bb.js must never be bundled into the server route.
+  serverExternalPackages: ["snarkjs", "circomlibjs", "@aztec/bb.js"],
   async headers() {
     return [{ source: "/(.*)", headers: crossOriginIsolation }];
   },

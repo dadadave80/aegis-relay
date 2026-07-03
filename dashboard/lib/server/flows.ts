@@ -46,10 +46,11 @@ import {
   FLIGHT_WASM,
   FLIGHT_ZKEY,
   NATIVE_SAC,
+  CT_TOKEN_ID,
   METHOD_U32,
   RAIL_U32,
-  loadAuditorKey,
 } from "./artifacts";
+import { auditLastTransfer } from "./confidential-audit";
 import * as store from "./store";
 import type { CarrierBJJ, ShipMeta } from "./store";
 import type {
@@ -180,15 +181,7 @@ function requireId(id?: number): number {
 async function buildCreate(source: string, p: Partial<CreateParams>): Promise<BuildTxRes> {
   const method: Method = p.method === "drone" ? "drone" : "courier";
   const rail: Rail = p.rail === "confidential" ? "confidential" : "transparent";
-  if (rail === "confidential") {
-    // The confidential rail needs a hook-caged escrow account funded via the CT
-    // token (prover confidential machinery) — not wired into the wallet flow
-    // this pass. The compliance beat is served by /api/confidential/audit.
-    throw new Error(
-      "confidential-rail create is not wired into the wallet flow this pass; " +
-        "use the transparent rail (the audit route returns the proven confidential result)",
-    );
-  }
+  if (rail === "confidential") return buildConfidentialCreate(source, p);
   // Drone shipments fly the regulator-APPROVED corridor (lane 7). Its root is
   // already published on-chain in the airspace contract, so the flight proof's
   // corridor_root must match it — which means the endpoints must be the lane's.
@@ -249,6 +242,77 @@ async function buildCreate(source: string, p: Partial<CreateParams>): Promise<Bu
     meta,
   });
   return { buildId: tx.buildId, xdr: tx.xdr, note: `C_S=${built.packet.c_s}` };
+}
+
+/**
+ * Confidential-rail create (ports prover/src/confidential.ts cmdCreateShipment).
+ * The registry NEVER learns the amount: amount=0, single milestone [10000], token
+ * = the hooked CT token, escrow = Some(E). The browser funds E FIRST
+ * (ConfidentialMerchant.fundEscrow) and passes E's address + packet here; the
+ * packet is stashed in the pending build and promoted to the ShipRecord on submit.
+ * Courier only — the confidential rail carries no drone corridor.
+ */
+async function buildConfidentialCreate(source: string, p: Partial<CreateParams>): Promise<BuildTxRes> {
+  const escrow = p.escrow;
+  if (!escrow) {
+    throw new Error(
+      "confidential create requires a funded escrow account E — fund it in the browser first " +
+        "(ConfidentialMerchant.fundEscrow), then submit with its address",
+    );
+  }
+  const toLat = p.toLat ?? 37.7749;
+  const toLon = p.toLon ?? -122.4194;
+  const deadlineHours = p.deadlineHours ?? 24;
+
+  const built = await buildShipment({
+    toLat: String(toLat),
+    toLon: String(toLon),
+    amount: "0", // the registry never learns the confidential amount
+    deadlineHours,
+    method: "courier",
+  });
+
+  const args = [
+    scAddr(source), // merchant == source
+    scU256(built.packet.c_s),
+    scAddr(CT_TOKEN_ID), // the HOOKED CT token (T25 pin), not NATIVE_SAC
+    scI128("0"), // amount 0 on the registry
+    scVecU32([10000]), // single milestone
+    scU64(built.escrowDeadline),
+    scU32(METHOD_U32.courier),
+    scU32(RAIL_U32.confidential),
+    scNone(), // lane_id: None
+    scAddr(escrow), // escrow: Some(E)
+  ];
+  const tx = await buildInvoke("create_shipment", source, args);
+  const meta: ShipMeta = {
+    method: "courier",
+    rail: "confidential",
+    laneId: null,
+    fromLat: toLat,
+    fromLon: toLon,
+    toLat,
+    toLon,
+    // The merchant's private reference (mailbox-only, never on-chain). The view
+    // layer renders "hidden" for the confidential rail.
+    amountXlm: p.amount ?? 0,
+    amountStroops: "0", // registry amount is 0
+    escrowDeadline: built.escrowDeadline,
+  };
+  store.putPending({
+    buildId: tx.buildId,
+    action: "create",
+    source,
+    xdr: tx.xdr,
+    packet: built.packet,
+    meta,
+    escrow: p.escrowRecord,
+  });
+  return {
+    buildId: tx.buildId,
+    xdr: tx.xdr,
+    note: `confidential C_S=${built.packet.c_s}, escrow ${escrow.slice(0, 8)}…, amount hidden on-chain`,
+  };
 }
 
 async function buildAccept(source: string, id: number): Promise<BuildTxRes> {
@@ -315,7 +379,7 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
     shipmentId = Number(id);
     const packet = pend.packet!;
     packet.shipment_id = id;
-    store.putShip({ shipmentId: id, packet, meta: pend.meta!, createdTx: res.hash });
+    store.putShip({ shipmentId: id, packet, meta: pend.meta!, createdTx: res.hash, escrow: pend.escrow });
   } else if (pend.action === "accept" && pend.shipmentId) {
     const rec = store.getShip(pend.shipmentId);
     if (rec && pend.carrierBJJ) {
@@ -455,15 +519,36 @@ export async function verifyFlow(id: number): Promise<VerifyRes> {
 
 // ── confidential audit (regulator decrypt — proven result) ───────────────────
 
-export async function auditFlow(): Promise<AuditRes> {
-  const key = loadAuditorKey();
-  const keyNote = key ? `auditor key id ${key.id}` : "regulator auditor key";
-  return {
-    amountXlm: "50",
-    note:
-      `${keyNote} decrypts the confidential settlement: 500000000 units = 50 XLM. ` +
-      "Recorded confidential lifecycle (CT-A shipment #1 — amount hidden on-chain, " +
-      "registry amount=0; settle tx 2d990d64577a95af182aec1e1032a9f96c9cf965ad7714ac9cc8e737b93f9aa3). " +
-      "A fresh confidential lifecycle is not wired into the wallet flow this pass.",
-  };
+export async function auditFlow(txHash?: string): Promise<AuditRes> {
+  // Real decrypt: the regulator's Grumpkin secret (server-held) opens the dual
+  // auditor ciphertexts of the last confidential settlement on the current token.
+  let decrypt: Awaited<ReturnType<typeof auditLastTransfer>> = null;
+  let liveError: string | undefined;
+  try {
+    decrypt = await auditLastTransfer(txHash);
+  } catch (e) {
+    liveError = e instanceof Error ? e.message : String(e);
+  }
+
+  if (decrypt) {
+    return {
+      amountXlm: decrypt.amountXlm,
+      txHash: decrypt.txHash,
+      from: decrypt.from,
+      to: decrypt.to,
+      channelsAgree: decrypt.channelsAgree,
+      note:
+        `Regulator decrypt (auditor key 0): ${decrypt.amountUnits} units = ${decrypt.amountXlm} XLM ` +
+        `(settle tx ${decrypt.txHash.slice(0, 10)}…; sender + recipient channels agree: ${decrypt.channelsAgree}). ` +
+        "Private to the world, transparent to the regulator.",
+    };
+  }
+
+  // Honest fallback — no canned amount. Either the auditor key is absent, no
+  // confidential settlement exists on the current token yet, or the live read
+  // threw (RPC). Say which.
+  const reason = liveError
+    ? `live decrypt failed: ${liveError}`
+    : "no confidential settlement on the current CT token yet — create + settle a confidential shipment to produce one";
+  return { amountXlm: "—", note: `Regulator decrypt unavailable (${reason}).` };
 }

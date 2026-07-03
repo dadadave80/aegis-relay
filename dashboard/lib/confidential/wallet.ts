@@ -38,12 +38,12 @@ import {
   type Signer,
   type KeyPair,
   type CircuitProver,
-  type SerializedKeyPair,
 } from "@ctd/sdk";
 import registerCircuit from "@ctd/sdk/circuits/register.json";
 import transferCircuit from "@ctd/sdk/circuits/transfer.json";
 import { Keypair } from "@stellar/stellar-sdk";
 
+import type { EscrowRecord } from "../types";
 import { CT_DEPLOYMENT } from "./deployment";
 import { keyDerivationMessage, skFromSignature } from "./derive-key";
 import { kitMessageSigner, type KitLike, type MessageSigner } from "./wallet-signer";
@@ -55,25 +55,7 @@ const noop: Log = () => {};
 /** Coarse progress for UI button labels. */
 export type TxPhase = "proving" | "submitting";
 
-/**
- * Per-shipment escrow packet — E's keys + the funds' only decryption handle.
- * Persisted in the SERVER mailbox (store.ts), NEVER committed. Shape mirrors the
- * CLI's escrow.json (prover/src/confidential.ts EscrowFile).
- */
-export interface EscrowRecord {
-  version: 1;
-  /** E's Stellar address (G…). */
-  escrow: string;
-  /** E's Stellar secret seed — mailbox material, never printed/committed. */
-  stellarSecret: string;
-  /** E's Grumpkin keys (sk + addrF), serialized. */
-  grumpkin: SerializedKeyPair;
-  /** Post-merge spendable opening of E — the funds' decryption handle. */
-  opening: { v: string; r: string };
-  token: string;
-  registry: string;
-  txs: Record<string, string>;
-}
+export type { EscrowRecord };
 
 function circuits() {
   return {

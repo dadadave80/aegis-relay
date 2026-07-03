@@ -59,6 +59,16 @@ export const CT_AUDITOR_ID =
   process.env.NEXT_PUBLIC_CT_AUDITOR_ID ||
   "CDCOI5E6FZQGUPD2DSYA6EEYFFXPYUHHYV3FSSG3N3LWWD3WZVYU3SNN";
 
+export const CT_VERIFIER_ID =
+  process.env.AEGIS_CT_VERIFIER_ID ||
+  process.env.NEXT_PUBLIC_CT_VERIFIER_ID ||
+  "CCZIHLG6KBNVRRM2QKP6HFSLJXV356ASA2XHPCRIDXNB6PAEZ7QGO756";
+
+/** Ledger the re-pinned CT token was deployed at — the event-scan start point. */
+export const CT_DEPLOYED_LEDGER = Number(
+  process.env.AEGIS_CT_DEPLOYED_LEDGER || process.env.NEXT_PUBLIC_CT_DEPLOYED_LEDGER || "3407219",
+);
+
 // ── Network ──────────────────────────────────────────────────────────────────
 
 /** RPC endpoint. Prefers an explicit AEGIS_RPC_URL, then the user's keyed
