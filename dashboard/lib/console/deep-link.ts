@@ -14,9 +14,8 @@ export function parseClaimedId(search: string): number | null {
   return Number.isSafeInteger(n) ? n : null;
 }
 
-/** Turn a server-returned claim link (a `/claim/<id>#<seedHex>` PATH, or an
- *  already-absolute URL) into an absolute, shareable URL against `origin`. The
- *  seed fragment is preserved verbatim — it never leaves the browser. */
+/** Turn a server-returned claim link (a `/claim/<id>` PATH, or an
+ *  already-absolute URL) into an absolute, shareable URL against `origin`. */
 export function claimUrl(origin: string, claimLink: string): string {
   if (/^https?:\/\//i.test(claimLink)) return claimLink;
   const base = origin.replace(/\/+$/, "");

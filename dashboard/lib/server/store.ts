@@ -96,6 +96,9 @@ export interface PendingBuild {
   packet?: Packet;
   meta?: ShipMeta;
   escrow?: EscrowRecord; // confidential create only
+  /** create-only: the merchant-designated recipient Stellar address, promoted
+   *  into the shipment's ClaimContext once the id is assigned. */
+  recipientAddress?: string;
   // accept-only payload, attached to the ShipRecord on submit:
   carrierBJJ?: CarrierBJJ;
 }
@@ -200,7 +203,7 @@ export async function listOpenListings(): Promise<string[]> {
   return out;
 }
 
-// ── Claim contexts (seed stays in the URL fragment; never here) ──────────────────
+// ── Claim contexts (recipientAddress + the held claim seed; PoD-signing state) ──
 
 export async function putClaimContext(token: string, ctx: ClaimContext): Promise<void> {
   await kv.set(CLAIM(token), ctx);

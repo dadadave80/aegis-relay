@@ -5,7 +5,7 @@
 import type {
   ShipmentView, ActionResult, BuildTxReq, BuildTxRes, SubmitTxReq, SubmitTxRes,
   VerifyRes, FlyInputRes, ProveInputRes, AuditRes, ShipmentReq, RoleInfo,
-  Listing, MarketClaimResult, ClaimContext, PodSignReq,
+  Listing, MarketClaimResult, ClaimChallengeRes, ClaimVerifyReq, ClaimVerifyRes,
   CarrierStatus, CarrierStatusRes, ReportReq, ReportRes,
 } from "./types";
 
@@ -50,9 +50,9 @@ export const api = {
   report:       (b: ReportReq)    => post<ReportRes>("/api/dispute/report", b),
   shipment:     (id: number)      => get<ShipmentView>(`/api/shipment/${id}`),
   roleInfo:     (address: string) => get<RoleInfo>(`/api/role?address=${encodeURIComponent(address)}`),
-  // recipient claim link — GET signing context, POST the in-browser PoD signature
-  claimContext: (id: number)      => get<ClaimContext>(`/api/claim/${id}`),
-  claimPod:     (b: PodSignReq)   => post<{ signed: boolean }>("/api/claim", b),
+  // recipient claim link — GET the challenge to sign, POST the wallet signature
+  claimChallenge: (id: number)          => get<ClaimChallengeRes>(`/api/claim/${id}`),
+  claimVerify:    (b: ClaimVerifyReq)   => post<ClaimVerifyRes>("/api/claim", b),
   // marketplace board + credential-gated claim (Task 5)
   market: {
     list:  ()                                    => get<Listing[]>("/api/market"),

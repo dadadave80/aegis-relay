@@ -2,21 +2,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { recordPodFlow, ok, fail } from "@/lib/server/flows";
-import type { PodSignReq } from "@/lib/types";
+import { claimVerifyFlow, ok, fail } from "@/lib/server/flows";
+import type { ClaimVerifyReq } from "@/lib/types";
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as PodSignReq;
-    if (
-      body.shipmentId === undefined ||
-      body.signature === undefined ||
-      body.lat === undefined ||
-      body.lon === undefined
-    ) {
-      throw new Error("shipmentId, signature, lat and lon are required");
+    const body = (await req.json()) as ClaimVerifyReq;
+    if (body.shipmentId === undefined || !body.address || !body.signature) {
+      throw new Error("shipmentId, address and signature are required");
     }
-    return NextResponse.json(ok(await recordPodFlow(body)));
+    return NextResponse.json(ok(await claimVerifyFlow(body)));
   } catch (e) {
     return NextResponse.json(fail(e));
   }

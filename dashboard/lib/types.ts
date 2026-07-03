@@ -48,7 +48,7 @@ export interface SubmitTxRes {
   tx: string;                         // explorer tx hash / id
   shipmentId?: number;                // assigned on create
   view?: ShipmentView;
-  claimLink?: string;                 // create only: /claim/<id>#<seedHex> for the recipient
+  claimLink?: string;                 // create only: /claim/<id> for the designated recipient
 }
 
 /** What the chain sees vs. what stays hidden — drives the money-shot panel. */
@@ -113,6 +113,10 @@ export interface CreateParams {
   method: Method;
   rail: Rail;
   deadlineHours?: number;             // default 24
+  /** The Stellar address (G…) the merchant designates as the recipient — the
+   *  wallet that must sign the claim challenge (/claim/<id>) to trigger the
+   *  server-side proof-of-delivery signing. Validated with isValidStellarAddress. */
+  recipientAddress: string;
   /** Confidential rail only: E's address (client funds E in the browser first). */
   escrow?: string;
   /** Confidential rail only: E's packet, stored in the mailbox on submit. */
@@ -186,14 +190,59 @@ export interface Listing {
   payout?: string;
 }
 
-/** Minimal PoD-signing context handed to a claim recipient. NOT the seed — the
- *  seed lives only in the /claim/<id>#<seedHex> URL fragment, never server-side. */
+/**
+ * Internal PoD-signing context for a shipment's recipient claim (KV `claim:<id>`).
+ * NEVER served verbatim to a client — GET /api/claim/<id> derives a sanitized
+ * `ClaimChallengeRes` from it instead (see claimChallengeFlow). `recipientAddress`
+ * is the merchant-designated Stellar address (wallet-ownership gate);
+ * `claimSeedHex` is the recipient's Baby Jubjub claim seed, held server-side
+ * ONLY so the server can sign the PoD once wallet ownership is verified
+ * (claimVerifyFlow) — it must never be returned to any client.
+ */
 export interface ClaimContext {
   shipmentId: number;
   carrierPkCommit: string;
   destRegion: unknown;
   tsWindow: number;
+  recipientAddress?: string;
+  claimSeedHex?: string;
 }
+
+/** Signable state for GET /api/claim/<id> (the wallet-ownership claim flow).
+ *  "unknown": no such shipment/claim record. "no_carrier": exists but no
+ *  carrier has accepted custody yet (nothing to sign). "ready": signable now.
+ *  "delivered": already settled — terminal, nothing left to sign. */
+export type ClaimState = "unknown" | "no_carrier" | "ready" | "delivered";
+
+/**
+ * GET /api/claim/<id> response. Deliberately minimal + non-sensitive: never
+ * lat/lon or the destination cell (that was a privacy leak) — just enough for
+ * the recipient to know which wallet to connect and what to sign.
+ */
+export interface ClaimChallengeRes {
+  shipmentId: number;
+  /** The designated recipient address, or null if the shipment is unknown. */
+  recipientAddress: string | null;
+  /** Deterministic message to sign with the designated wallet; null unless
+   *  state === "ready". */
+  challenge: string | null;
+  state: ClaimState;
+}
+
+/**
+ * POST /api/claim — prove wallet ownership of the designated recipient
+ * address. `signature` is the base64 `signedMessage` returned by the Stellar
+ * Wallets Kit's `signMessage(challenge)`. On success the server verifies the
+ * Ed25519 signature and, ONLY THEN, produces the Baby Jubjub proof-of-delivery
+ * signature server-side (the wallet signature is ownership + receipt proof; it
+ * does not replace the ZK PoD the A1 circuit needs).
+ */
+export interface ClaimVerifyReq {
+  shipmentId: number;
+  address: string;
+  signature: string;
+}
+export interface ClaimVerifyRes { signed: boolean; }
 
 /** Whether a carrier address has been credentialed (one-shot onboarding). */
 export interface CarrierStatus {
@@ -215,14 +264,6 @@ export interface CarrierStatusRes extends CarrierStatus {
 /** POST /api/market — credential-gated packet claim. */
 export interface MarketClaimReq { shipmentId: number; }
 export interface MarketClaimRes { packet: unknown; }
-
-/** POST /api/claim — recipient stores the in-browser PoD signature. */
-export interface PodSignReq {
-  shipmentId: number;
-  signature: unknown;
-  lat: number;
-  lon: number;
-}
 
 /**
  * POST /api/market claim result. Credentialed carriers get the sealed packet

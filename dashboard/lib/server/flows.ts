@@ -17,11 +17,11 @@ import {
   verifyPacket,
   sampleFieldSalt,
 } from "./prover-dist/carrier.js";
-import type { Pod } from "./prover-dist/recipient.js";
+import { signPod, type Pod } from "./prover-dist/recipient.js";
 import { pkCommit } from "./prover-dist/lib/poseidon.js";
 import { latLonToQ, mortonCell } from "./prover-dist/lib/tree.js";
 import { RD_RES } from "./prover-dist/lib/constants.js";
-import { podRecord, type PodEnvelope } from "../pod/pod-record";
+import { verifyWalletSignature, buildClaimChallenge } from "../wallet-sig";
 import {
   buildFlightScenario,
   deriveDroneKey,
@@ -66,7 +66,9 @@ import type {
   AuditRes,
   ConfSettleRelease,
   ClaimContext,
-  PodSignReq,
+  ClaimChallengeRes,
+  ClaimVerifyReq,
+  ClaimVerifyRes,
   Listing,
   MarketClaimResult,
   CarrierStatus,
@@ -186,10 +188,21 @@ function requireId(id?: number): number {
   return id;
 }
 
+/** The merchant must designate a recipient Stellar address on every create —
+ *  it's the wallet-ownership gate for the /claim/<id> flow (both rails). */
+function requireRecipientAddress(p: Partial<CreateParams>): string {
+  const addr = p.recipientAddress;
+  if (!addr || !isValidStellarAddress(addr)) {
+    throw new Error("a valid recipient Stellar address (G...) is required to create a shipment");
+  }
+  return addr;
+}
+
 async function buildCreate(source: string, p: Partial<CreateParams>): Promise<BuildTxRes> {
   const method: Method = p.method === "drone" ? "drone" : "courier";
   const rail: Rail = p.rail === "confidential" ? "confidential" : "transparent";
   if (rail === "confidential") return buildConfidentialCreate(source, p);
+  const recipientAddress = requireRecipientAddress(p);
   // Drone shipments fly the regulator-APPROVED corridor (lane 7). Its root is
   // already published on-chain in the airspace contract, so the flight proof's
   // corridor_root must match it — which means the endpoints must be the lane's.
@@ -248,6 +261,7 @@ async function buildCreate(source: string, p: Partial<CreateParams>): Promise<Bu
     xdr: tx.xdr,
     packet: built.packet,
     meta,
+    recipientAddress,
   });
   return { buildId: tx.buildId, xdr: tx.xdr, note: `C_S=${built.packet.c_s}` };
 }
@@ -268,6 +282,7 @@ async function buildConfidentialCreate(source: string, p: Partial<CreateParams>)
         "(ConfidentialMerchant.fundEscrow), then submit with its address",
     );
   }
+  const recipientAddress = requireRecipientAddress(p);
   const toLat = p.toLat ?? 37.7749;
   const toLon = p.toLon ?? -122.4194;
   const deadlineHours = p.deadlineHours ?? 24;
@@ -315,6 +330,7 @@ async function buildConfidentialCreate(source: string, p: Partial<CreateParams>)
     packet: built.packet,
     meta,
     escrow: p.escrowRecord,
+    recipientAddress,
   });
   return {
     buildId: tx.buildId,
@@ -390,12 +406,16 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
     const meta = pend.meta!;
     packet.shipment_id = id;
 
-    // The server never holds the recipient's claim seed once the shipment
-    // exists (Task 3 review: "server never holds the seed"). Capture it ONLY
-    // to mint the claim link below, then persist a stripped copy of the
-    // packet — assembleDeliveryWitness/verifyPacket read cs_opening/
-    // dest_region/pod, never recipient_claim, so the delivery path is
-    // unaffected by the strip.
+    // The recipient claim seed is now HELD SERVER-SIDE (reversing the earlier
+    // "seed stripped from the ship record" step, per the wallet-claim design:
+    // the server must hold it to sign the PoD for the wallet-proven recipient
+    // — see claimVerifyFlow). It is still stripped from the PACKET persisted
+    // on ship:<id>, though: marketClaimFlow hands that packet's raw bytes to
+    // any credentialed carrier, and the seed must never reach a carrier.
+    // assembleDeliveryWitness/verifyPacket read cs_opening/dest_region/pod,
+    // never recipient_claim, so the delivery path is unaffected by the strip.
+    // The seed lives ONLY in the gated claim:<id> record below, read solely by
+    // claimVerifyFlow after wallet-ownership verification.
     const claimSeedHex = packet.recipient_claim.eddsa_seed_hex;
     const persistedPacket = { ...packet, recipient_claim: { eddsa_seed_hex: "" } };
     await store.putShip({ shipmentId: id, packet: persistedPacket, meta, createdTx: res.hash, escrow: pend.escrow });
@@ -414,21 +434,26 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
     await store.putListing(listing);
     await store.addOpenListing(id, createdAt);
 
-    // Recipient signing context — deliberately WITHOUT the claim seed. Only the
-    // dest-region root is exposed (minimal disclosure, §13; the recipient derives
-    // cell_rd from their own confirmed location). carrier_pk_commit is bound at accept.
+    // Recipient signing context — bound to the merchant-designated address and
+    // holding the claim seed server-side (see note above). Only the dest-region
+    // root is exposed publicly (minimal disclosure, §13; the recipient's exact
+    // coords are never requested from them — the server already knows them via
+    // meta.toLat/toLon). carrier_pk_commit is bound at accept.
     const ctx: ClaimContext = {
       shipmentId,
       carrierPkCommit: "",
       destRegion: packet.dest_region.root,
       tsWindow: Number(meta.escrowDeadline),
+      recipientAddress: pend.recipientAddress,
+      claimSeedHex,
     };
     await store.putClaimContext(id, ctx);
 
-    // The claim SEED travels ONLY in the link fragment — never sent to or stored by
-    // the server (§5 honesty). Surfaced here so the merchant UI can hand the link
-    // to the recipient. The id exists only now (create_shipment return value).
-    claimLink = `/claim/${id}#${claimSeedHex}`;
+    // No bearer fragment anymore — the recipient proves ownership of
+    // ctx.recipientAddress by connecting that wallet and signing a challenge
+    // (claimChallengeFlow / claimVerifyFlow). The id exists only now
+    // (create_shipment return value).
+    claimLink = `/claim/${id}`;
   } else if (pend.action === "accept" && pend.shipmentId) {
     const rec = await store.getShip(pend.shipmentId);
     if (rec && pend.carrierBJJ) {
@@ -448,8 +473,9 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
     // Complete the recipient signing context now that a carrier is bound: the
     // create-time stub only has the dest-region ROOT (no carrier yet); fill in
     // carrierPkCommit AND reshape destRegion into { lat, lon, cellRd } — the
-    // exact fields claimContextFlow/the /claim page/signPodBrowser need. (rec
-    // is the just-fetched-above ShipRecord; reused, no extra store round-trip.)
+    // exact fields claimContextFlow/claimVerifyFlow need to sign the PoD
+    // server-side. (rec is the just-fetched-above ShipRecord; reused, no extra
+    // store round-trip.)
     if (pend.carrierBJJ) {
       const ctx = await store.getClaimContext(pend.shipmentId);
       if (ctx) {
@@ -560,22 +586,94 @@ export async function claimContextFlow(id: number): Promise<ClaimContext> {
 }
 
 /**
- * Store a browser-signed proof-of-delivery against ship:<id>. The recipient
- * derived their Baby Jubjub key from the fragment seed and signed
- * m = Poseidon(DOM_PODMSG, id, carrier_pk_commit, cell_rd, ts) IN THE BROWSER;
- * only the signature (+ ts + the confirmed committed coords) reaches us. We
- * persist it in the exact Pod shape the A1 delivery witness reads. The coords are
- * the committed dest coords, so cell_rd recomputed from lat_q/lon_q matches the
- * signed message.
+ * GET /api/claim/<id> — the wallet-ownership claim flow's signable state.
+ * Deliberately minimal + non-sensitive (NEVER lat/lon or the destination cell,
+ * that was a privacy leak — the recipient already knows their own location):
+ * just the designated address + a deterministic challenge to sign + a clear
+ * terminal state for "unknown shipment" / "no carrier yet" / "already
+ * delivered", so the route never has to throw for an everyday non-signable
+ * shipment. `challenge` is derived purely from stored fields (id + createdTx)
+ * so claimVerifyFlow can re-derive and compare without extra storage.
  */
-export async function recordPodFlow(req: PodSignReq): Promise<{ signed: boolean }> {
-  const { shipmentId, signature, lat, lon } = req;
+export async function claimChallengeFlow(id: number): Promise<ClaimChallengeRes> {
+  if (!Number.isInteger(id) || id < 1) throw new Error(`not a shipment id: ${id}`);
+
+  const [rec, ctx] = await Promise.all([store.getShip(id), store.getClaimContext(String(id))]);
+  if (!rec || !ctx?.recipientAddress) {
+    return { shipmentId: id, recipientAddress: null, challenge: null, state: "unknown" };
+  }
+  if (rec.deliverTx) {
+    return { shipmentId: id, recipientAddress: ctx.recipientAddress, challenge: null, state: "delivered" };
+  }
+  if (!rec.carrierBJJ) {
+    return { shipmentId: id, recipientAddress: ctx.recipientAddress, challenge: null, state: "no_carrier" };
+  }
+  return {
+    shipmentId: id,
+    recipientAddress: ctx.recipientAddress,
+    challenge: buildClaimChallenge(id, rec.createdTx ?? ""),
+    state: "ready",
+  };
+}
+
+/** Narrows ClaimContext.destRegion to its post-accept reshaped form (see
+ *  submitAction's accept branch / isCompleteClaimContext). */
+interface DestRegionCell { lat: number; lon: number; cellRd: string }
+
+/**
+ * POST /api/claim — verify the connected wallet's Ed25519 signature over the
+ * re-derived challenge against the shipment's DESIGNATED recipient address
+ * (@stellar/stellar-sdk Keypair.verify, via wallet-sig.ts). The wallet
+ * signature is ownership + receipt proof; it does NOT replace the ZK PoD the
+ * A1 circuit needs. ONLY on success does the server derive the recipient's
+ * Baby Jubjub key from the held claim seed and sign
+ *   m = Poseidon(DOM_PODMSG, id, carrier_pk_commit, cell_rd, ts)
+ * (prover-dist/recipient.js signPod — the exact CLI/browser reference), with a
+ * FRESH ts (claimContextFlow's freshTsWindow — the StaleTs fix requires this
+ * even on a re-sign). The result already has the {R8x,R8y,S,ts,lat_q,lon_q}
+ * Pod shape verbatim, so it's stored on ship:<id> in EXACTLY the field/shape
+ * deliveryInputFlow/assembleDeliveryWitness read — see the read-site below.
+ */
+export async function claimVerifyFlow(req: ClaimVerifyReq): Promise<ClaimVerifyRes> {
+  const { shipmentId, address, signature } = req;
+  if (!Number.isInteger(shipmentId) || shipmentId < 1) throw new Error(`not a shipment id: ${shipmentId}`);
+  if (!isValidStellarAddress(address)) throw new Error("invalid Stellar address");
+
   const rec = await store.getShip(shipmentId);
-  if (!rec) throw new Error(`no stored packet for shipment ${shipmentId}`);
-  if (!rec.carrierBJJ) throw new Error(`shipment ${shipmentId} not accepted yet (no carrier commit)`);
-  const { latQ, lonQ } = latLonToQ(lat, lon);
-  const pod = podRecord(signature as PodEnvelope, latQ, lonQ);
-  await store.updateShip(shipmentId, { pod: pod as Pod });
+  if (!rec) throw new Error(`no shipment #${shipmentId} on this server`);
+  if (rec.deliverTx) throw new Error(`shipment #${shipmentId} is already delivered — there is nothing left to sign`);
+  if (!rec.carrierBJJ) {
+    throw new Error(`shipment #${shipmentId} has no carrier yet — there is nothing to sign until a carrier accepts custody`);
+  }
+
+  const ctx = await store.getClaimContext(String(shipmentId));
+  if (!ctx?.recipientAddress || !ctx.claimSeedHex) {
+    throw new Error(`shipment #${shipmentId} has no designated recipient on file`);
+  }
+  if (address !== ctx.recipientAddress) {
+    throw new Error("the connected wallet is not the designated recipient for this shipment");
+  }
+
+  const challenge = buildClaimChallenge(shipmentId, rec.createdTx ?? "");
+  if (!verifyWalletSignature(address, challenge, signature)) {
+    throw new Error("wallet signature verification failed");
+  }
+
+  // Wallet ownership proven — produce the Baby Jubjub PoD server-side, using
+  // the SAME fresh-context assembly claimContextFlow already provides (carrier
+  // commit + destRegion{lat,lon,cellRd} + a ts that's always fresh).
+  const signing = await claimContextFlow(shipmentId);
+  const dest = signing.destRegion as DestRegionCell;
+  const { latQ, lonQ } = latLonToQ(dest.lat, dest.lon);
+  const pod = await signPod({
+    claimSeedHex: ctx.claimSeedHex,
+    shipmentId,
+    carrierPkCommit: signing.carrierPkCommit,
+    latQ,
+    lonQ,
+    ts: signing.tsWindow,
+  });
+  await store.updateShip(shipmentId, { pod: pod as Pod }); // ← WRITE-SITE (see report: matches deliveryInputFlow's read-site verbatim)
   return { signed: true };
 }
 

@@ -29,6 +29,7 @@ import type {
 import { useSession } from "@/lib/session-context";
 import { useWallet } from "@/lib/wallet-context";
 import { useWalletFlows } from "@/lib/wallet-flows";
+import { isValidStellarAddress } from "@/lib/carrier-gate";
 import { CarrierRep } from "@/components/market/CarrierRep";
 import { useToast } from "./toast";
 import {
@@ -151,7 +152,8 @@ function Result({ tone = "verified", children }: { tone?: "verified" | "caution"
 }
 
 /** Post-create Merchant surface: listing status + the copyable recipient claim
- *  link. The seed lives only in the URL fragment (`#…`) — never on the server. */
+ *  link. The recipient proves ownership with a wallet signature — no bearer
+ *  seed in the URL. */
 function ClaimLinkCard({ shipmentId, claimLink }: { shipmentId: number; claimLink: string | null }) {
   const [copied, setCopied] = useState(false);
   const url =
@@ -180,8 +182,8 @@ function ClaimLinkCard({ shipmentId, claimLink }: { shipmentId: number; claimLin
         <>
           <div className="stamp" style={{ color: "var(--chain-dim)" }}>Recipient claim link</div>
           <p className="text-xs" style={{ margin: "4px 0 10px", color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
-            Send this to the recipient. The signing seed rides in the URL fragment (after the{" "}
-            <span className="mono">#</span>) and never reaches the server.
+            Send this to the designated recipient. They connect that wallet and sign a challenge on
+            the page to confirm delivery — no seed rides in this link.
           </p>
           <div className="flex items-center gap-2">
             <input
@@ -233,6 +235,7 @@ function MerchantPanel() {
   const [method, setMethod] = useState<Method>("drone");
   const [rail, setRail] = useState<Rail>("transparent");
   const [deadline, setDeadline] = useState("24");
+  const [recipientAddress, setRecipientAddress] = useState("");
   const [created, setCreated] = useState<{ shipmentId: number; claimLink: string | null } | null>(null);
 
   const walletReady = !!stellarAddress;
@@ -245,6 +248,14 @@ function MerchantPanel() {
         setError({ title: "Invalid amount", detail: "Enter a positive XLM amount." });
         return;
       }
+      const recipient = recipientAddress.trim();
+      if (!isValidStellarAddress(recipient)) {
+        setError({
+          title: "Invalid recipient address",
+          detail: "Enter the recipient's Stellar address (a G… public key) — they'll sign the claim from that wallet.",
+        });
+        return;
+      }
       const params: CreateParams = {
         toLat: Number(toLat),
         toLon: Number(toLon),
@@ -252,6 +263,7 @@ function MerchantPanel() {
         method,
         rail,
         deadlineHours: Number(deadline) || 24,
+        recipientAddress: recipient,
         ...(method === "drone"
           ? { fromLat: Number(fromLat), fromLon: Number(fromLon) }
           : {}),
@@ -316,6 +328,17 @@ function MerchantPanel() {
           <TextInput value={deadline} onChange={(e) => setDeadline(e.target.value)} inputMode="numeric" />
         </Field>
       </div>
+
+      <Field
+        label="Recipient Stellar address"
+        hint="the wallet that must connect + sign the claim link to confirm delivery (a G… public key)"
+      >
+        <TextInput
+          value={recipientAddress}
+          onChange={(e) => setRecipientAddress(e.target.value.trim())}
+          placeholder="G..."
+        />
+      </Field>
 
       <div className="space-y-3">
         <div>
@@ -890,15 +913,14 @@ function RecipientPanel() {
 
   return (
     <Panel
-      title="Recipient — sign proof of delivery"
-      subtitle="The recipient's device signs one Poseidon message with the claim key issued by the merchant. The chain never sees the signature, the key, or the location — only a proof it all checks out."
+      title="Recipient — confirm delivery"
+      subtitle="The designated recipient connects their Stellar wallet and signs a challenge to prove ownership. Only then does the server sign the Baby Jubjub proof of delivery the A1 circuit needs — the chain never sees the signature, the key, or the location."
     >
       <Result>
-        Signing now happens on the recipient&apos;s own device, not in this console.
-        The merchant&apos;s claim link (
-        <span className="mono">/claim/{currentShipmentId}#&lt;seed&gt;</span>) carries
-        the one-time claim key in its URL fragment — open it as the recipient to sign
-        proof of delivery in the browser.
+        Confirming now happens on the recipient&apos;s own device, not in this console. The
+        merchant&apos;s claim link (<span className="mono">/claim/{currentShipmentId}</span>) shows the
+        designated recipient address — open it as the recipient, connect that wallet, and sign the
+        challenge.
       </Result>
 
       <a
@@ -908,14 +930,14 @@ function RecipientPanel() {
         className="mono hover:underline"
         style={{ color: "var(--mint)" }}
       >
-        open the claim page (needs the #seed from creation) ↗
+        open the claim page ↗
       </a>
 
       <Honesty>
-        The PoD is a Baby Jubjub (circuit) signature, not a Stellar tx — the
-        recipient never transacts on-chain. The claim seed lives only in the
-        claim link&apos;s URL fragment; the server never stores or sees it —
-        there is no server-side signing shortcut left in this console.
+        The proof of delivery is a Baby Jubjub (circuit) signature, not a Stellar tx — the
+        recipient never transacts on-chain. Their wallet signature only proves ownership of the
+        designated address; the server produces the ZK proof of delivery server-side after
+        verifying it, using the claim key it holds for exactly this shipment.
       </Honesty>
     </Panel>
   );
