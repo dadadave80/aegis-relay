@@ -7,8 +7,8 @@
  * RPC dependency, so it always works.
  */
 
-import corridorJson from "../../circuits/fixtures/flight/corridor.json";
-import flightInput from "../../circuits/fixtures/flight/input.json";
+import corridorJson from "./fixtures-data/flight/corridor.json";
+import flightInput from "./fixtures-data/flight/input.json";
 
 export interface CorridorFixture {
   laneId: number;

@@ -24,9 +24,13 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname, ".."),
   },
-  // /map imports fixtures from ../circuits and @ctd/sdk is a `file:` link into
-  // ../vendor/ctd-sdk — both outside dashboard/. webpack needs externalDir to
-  // follow imports outside the project root.
+  // Monorepo/Vercel: trace serverless files from the workspace root, so the
+  // hoisted deps + the vendored @ctd/sdk (at ../vendor/ctd-sdk) are included in
+  // function bundles rather than looked for under dashboard/ only.
+  outputFileTracingRoot: path.join(__dirname, ".."),
+  // @ctd/sdk resolves (via the bun workspace) to ../vendor/ctd-sdk, outside
+  // dashboard/. webpack needs externalDir to follow imports outside the project
+  // root. (The /map flight fixtures are now vendored into lib/fixtures-data.)
   experimental: { externalDir: true },
   // @ctd/sdk ships untranspiled TS/ESM; Next must transpile it in the app graph.
   transpilePackages: ["@ctd/sdk"],
