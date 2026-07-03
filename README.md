@@ -71,6 +71,21 @@ Plus 8 witness-level drone attacks (stray, teleport, gap, non-monotonic, splice,
 
 ---
 
+## The interactive marketplace (web app)
+
+Beyond the CLIs, Aegis Relay ships a **multi-sided marketplace web app** (`dashboard/`) that turns the protocol into a live product a judge can drive end-to-end:
+
+- **Merchants** create a shipment (transparent or confidential rail) and get a shareable **recipient claim link**.
+- **Carriers** browse an **open-shipments board** (`/market`) and — once **credentialed** — claim a job, receive the sealed packet, verify it against on-chain `C_S`, and accept custody. First valid `accept` wins (the registry enforces it).
+- **Recipients** open the claim link and sign the proof-of-delivery **in their own browser** (EdDSA-Poseidon via circomlibjs); the seed rides in the URL fragment and the server never holds the claim key.
+- Carrier **reputation**, self-serve **onboarding**, live board **notifications** (poll), and a **refund-on-expiry** dispute path round out the loop.
+
+**Groth16 proving runs in the browser.** The A1 delivery and A2 flight proofs are generated client-side with snarkjs against static wasm/zkey artifacts — the *same* witness the server would assemble, proved on the user's machine, flowing through the *unchanged* on-chain verify path — so the app is fully static-hostable (Vercel) with no serverless proving.
+
+Live demo: **https://aegis-relay.vercel.app** · local: `bun install && cd dashboard && bun run dev` (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
+
+---
+
 ## Architecture
 
 The pipeline is fully platform-native — no external verifier service:
@@ -104,7 +119,8 @@ aegis-relay/
 ├── prover/              # TypeScript CLIs + shared encoders
 │   └── src/{merchant,carrier,dronesim,recipient,authority,confidential}.ts
 │       └── lib/         #   bn254 (G2 limb-swap Rosetta stone), poseidon, packet, tree
-├── dashboard/           # Next.js — track / map / verify pages
+├── dashboard/           # Next.js marketplace app — console, /market board,
+│                        #   /claim recipient page, browser-side Groth16 proving
 └── docs/                # DESIGN.md, PIVOT.md, testnet.md, demo-script.md
 ```
 
@@ -210,6 +226,8 @@ Under-claiming is worse than the leak. This section is the point — a judge sho
 **8. On-chain leaks that remain.** Even at best, the public chain still sees: settlement **addresses** (carrier accept + payout, merchant funding), state-transition **timing**, the `lane_id` (a coarse regulator-published route class), and — on the *transparent* rail — the **escrow amount**. Mitigated *now* by fresh Stellar keys per role per shipment (the demo does this) and a coarsened public deadline; batching / shielded-pool windows are roadmap. Full leak table: [`docs/DESIGN.md`](docs/DESIGN.md) §13.
 
 **9. BN254 is ~100–110-bit security.** The choice is deliberate (smallest proofs, cheapest verify, native host-fn support, proven v1 plumbing). Migration to **BLS12-381 is roadmap**.
+
+**10. The interactive marketplace is a demo UX layer, not a second trust boundary.** The web app makes the on-chain protocol drivable; its off-chain conveniences are deliberately open for testability and are **not** the security boundary — the ZK proofs and Soroban contracts are. In this build specifically: carrier **credentialing is self-serve** (any wallet can onboard — the `aegis-credentials` contract only exposes issuer-gated `set_root`, so real issuer-signed credential leaves are roadmap); shipment/claim state lives in a **KV store** (an in-memory fallback for local dev, a shared KV for a real deploy) rather than on-chain; and the demo APIs (claim-context, PoD-record, report) are **unauthenticated over enumerable shipment ids**, so the recipient signing-context endpoint can reveal a shipment's destination cell to anyone who knows its id. None of these weaken the on-chain guarantees; they are the demo's open surface, and closing them (seed-scoped claim tokens, issuer-signed credentials, wallet-bound claims) is roadmap.
 
 ---
 

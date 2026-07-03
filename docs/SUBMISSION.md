@@ -31,6 +31,8 @@ Each proof is verified by a Groth16 verifier assembled from Stellar's native BN2
 
 **Headline feature — confidential escrow.** An optional rail adopts OpenZeppelin's confidential token (UltraHonk/Grumpkin) so the escrow *amount* is hidden on-chain too. Per-shipment escrow accounts are "caged" by contract hooks: possessing the key grants proof-generation capability but zero spending authority — the token asks the registry's state machine before any movement. Settlements land with no amount on the explorer; a designated regulator key can still decrypt them. Private to the world, transparent to the regulator.
 
+**Also shipped — a multi-sided marketplace web app** (`dashboard/`, Next.js) that makes the whole protocol drivable in a browser: merchants create shipments and get a shareable recipient claim link; carriers browse an open-shipments board and (once credentialed) claim, verify against on-chain `C_S`, and accept a job; recipients confirm delivery by signing the proof-of-delivery **in their own browser**. Groth16 proving runs client-side, so the app is fully static-hostable. The web app's off-chain conveniences are a deliberately-open demo layer, not the trust boundary (README limitation #10).
+
 ## What's live on Stellar Testnet (verifiable now)
 
 - **Confidential courier lifecycle** — 50 XLM escrowed with the amount hidden; premature-settle and withdraw-to-public both rejected on-chain by the hooks; Groth16 delivery verified; hook-admitted settlement carries no visible amount; the regulator key decrypts exactly 50 XLM.
@@ -47,6 +49,7 @@ Circom 2.2.3 + snarkjs · Groth16 / BN254 · circomlib Poseidon + EdDSA-Poseidon
 - GitHub (open source): https://github.com/dadadave80/aegis-relay
 - Provenance (v1 donor): https://github.com/dadadave80/aegis-zk-proof-of-reserves
 - Testnet registry: https://stellar.expert/explorer/testnet/contract/CAROLAUWCNZGSLSAISY5OVY5GZDZ6ULPBAO3U4FKTU3OIAOVPO6ZKPZL
+- Live demo (web app): https://aegis-relay.vercel.app  *(confirm it's live before filing)*
 - Demo video: <PASTE AFTER RECORDING — script in docs/demo-script.md>
 
 ## Honest limitations (we lead with these)
@@ -57,5 +60,5 @@ Drone attestation is a labeled software simulator — the proof trusts the signi
 ## Remaining founder actions
 
 1. **Record the demo video** (~2:40) — script + command crib at `docs/demo-script.md`. Point the CLIs at the deployed registry (all IDs in `docs/testnet.md`).
-2. **Deploy the dashboard** (optional, nice-to-have) — from `dashboard/`: `vercel --prod` (or connect the GitHub repo in the Vercel dashboard for auto-deploy). It builds green locally today (`bun run build`); a hosted URL just needs a network/auth window the sandbox didn't have. Add the URL to the README + BUIDL when live.
+2. **Deploy the marketplace web app** to `aegis-relay.vercel.app` — import the GitHub repo in Vercel with **Root Directory = `dashboard`**, then add a **KV store** (Vercel KV / Upstash → `KV_REST_API_URL` + `KV_REST_API_TOKEN`; without it the shared marketplace state won't persist across serverless instances and the multi-actor loop breaks) plus `STELLAR_TESTNET_RPC_URL`. Full runbook in [`docs/DEPLOYMENT.md`](DEPLOYMENT.md). Confirm the URL is live before pasting it into the BUIDL.
 3. **File the BUIDL** with the text above; paste the video link; re-open as a judge and click every link.
