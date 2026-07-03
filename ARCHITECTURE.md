@@ -223,7 +223,7 @@ cd dashboard && bun test                        # dashboard unit tests (KV, list
 
 ---
 
-## 9. Deployment (Vercel → aegis-relay.vercel.app)
+## 9. Deployment (Vercel → aegis-zk-relay.vercel.app)
 
 The app is Vercel-deployable; the KV store is the one required piece of setup.
 

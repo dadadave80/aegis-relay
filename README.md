@@ -98,7 +98,7 @@ Beyond the CLIs, Aegis Relay ships a **multi-sided marketplace web app** (`dashb
 
 **Groth16 proving runs in the browser.** The A1 delivery and A2 flight proofs are generated client-side with snarkjs against static wasm/zkey artifacts — the *same* witness the server would assemble, proved on the user's machine, flowing through the *unchanged* on-chain verify path — so the app is fully static-hostable (Vercel) with no serverless proving.
 
-Live demo: **https://aegis-relay.vercel.app** · local: `bun install && cd dashboard && bun run dev` (deployment in [`ARCHITECTURE.md`](ARCHITECTURE.md)).
+Live demo: **https://aegis-zk-relay.vercel.app** · local: `bun install && cd dashboard && bun run dev` (deployment in [`ARCHITECTURE.md`](ARCHITECTURE.md)).
 
 ---
 
