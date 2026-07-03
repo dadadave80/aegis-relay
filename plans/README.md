@@ -15,7 +15,7 @@ run the drift check first, and update your row when done.
 |------|-------|----------|--------|------------|--------|
 | 001 | Enforce one role per wallet on-chain (registry role binding) | P1 | M | — | DONE (branch `advisor/001-onchain-role-binding`, commit `5d2f840`; unmerged — awaiting redeploy) |
 | 002 | Make it the real app — remove "demo" framing + the attacker role | P1 | M | — | DONE (branch `advisor/002-real-app-remove-demo-and-attacker`, commit `c5f0df4`; unmerged) |
-| 003 | First-connect role modal + on-chain-gated role switching | P2 | M | 001 (deployed), 002 | TODO |
+| 003 | First-connect role modal + on-chain-gated role switching | P2 | M | 001 (deployed ✓), 002 (merged ✓) | TODO — now executable |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
@@ -23,9 +23,12 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED 
 
 - **001 and 002 are independent** and can run in parallel (001 is Rust/contract;
   002 is the dashboard). Neither blocks the other.
-- **003 requires 001 to be built AND redeployed** — it calls the new
-  `role_of`/`active_count` entrypoints; the redeployed registry id must be wired
-  into the dashboard config first (003 Step 0 checks this).
+- **003 requires 001 to be built AND redeployed** — DONE: registry redeployed
+  2026-07-03 to `CAROLAUWCNZGSLSAISY5OVY5GZDZ6ULPBAO3U4FKTU3OIAOVPO6ZKPZL` (role
+  binding live-verified: create → `role_of`=Merchant, `active_count`=1, same
+  wallet `accept` → `WrongRole #23`). New id already wired into
+  `dashboard/{lib/contract.ts, lib/server/artifacts.ts, components/console/config.ts}`,
+  so 003 Step 0 passes. 003 is executable now.
 - **003 requires 002** — it edits files at their post-rename paths
   (`components/console/…`) and assumes the attacker role is already gone.
 - Recommended order: 001 and 002 first (either order / parallel), then redeploy
