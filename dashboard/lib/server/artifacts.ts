@@ -12,20 +12,10 @@ import "server-only";
 import path from "node:path";
 import fs from "node:fs";
 
-/** Repo root — dashboard/ is one level down. Prover + circuits live here. */
+/** Repo root — dashboard/ is one level down. Only the (gitignored, optional)
+ *  auditor key is read from here; the Groth16 proving artifacts are served as
+ *  static assets from dashboard/public/circuits and proved in the browser. */
 export const REPO_ROOT = path.resolve(process.cwd(), "..");
-
-/** Proving artifacts: env override, else <repo>/circuits/build. */
-export const ARTIFACTS_DIR =
-  process.env.AEGIS_ARTIFACTS_DIR || path.join(REPO_ROOT, "circuits", "build");
-
-export const DELIVERY_WASM = path.join(ARTIFACTS_DIR, "delivery_js", "delivery.wasm");
-export const DELIVERY_ZKEY = path.join(ARTIFACTS_DIR, "delivery_final.zkey");
-export const FLIGHT_WASM = path.join(ARTIFACTS_DIR, "flight_js", "flight.wasm");
-export const FLIGHT_ZKEY = path.join(ARTIFACTS_DIR, "flight_final.zkey");
-
-/** Committed fixtures (real, proven) — used for the drone route + audit beat. */
-export const FLIGHT_FIXTURE_DIR = path.join(REPO_ROOT, "circuits", "fixtures", "flight");
 
 // ── Deployed testnet contracts (docs/testnet.md — final deployment) ──────────
 

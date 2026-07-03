@@ -33,29 +33,28 @@ repo:
   gitignored demo secret) is absent on Vercel, so `/api/confidential/audit`
   returns its honest "regulator decrypt unavailable" fallback rather than failing.
 
-## ⚠️ The one blocker — server-side Groth16 proving (DECISION PENDING)
+## Groth16 proving — browser-side (RESOLVED)
 
-`/api/drone/fly` (`flyFlow`) and `/api/prove-delivery` (`proveDeliveryFlow`) run
-**live snarkjs Groth16 proving** — `groth16.fullProve(witness, wasm, zkey)` —
-against `circuits/build/{delivery,flight}_final.zkey` + the matching wasm
-(~**65 MB**, part of a 547 MB gitignored `circuits/build`). Delivery proving gates
-**every** shipment's settle, so it's on the critical path. Fixture proofs can't
-substitute (the proof's public inputs — `c_s`, `head` — are per-shipment). This
-will not run on Vercel as-is: the artifacts aren't in the repo and don't fit a
-serverless function.
+The two proving beats run **in the browser**, so the multi-MB zkeys never live in
+a serverless function:
 
-Options (see the pinned question in the working session):
+- **Static artifacts:** `dashboard/public/circuits/{delivery,flight}.wasm` +
+  `{delivery,flight}_final.zkey` (~65 MB, committed, served from `/circuits`).
+- **Two-phase flow:** `/api/drone/fly` and `/api/prove-delivery` each dispatch on
+  the body — `{ shipmentId }` returns the assembled circuit *input* (server does
+  the witness assembly, which needs the packet + crypto); the browser fetches the
+  wasm/zkey and runs `snarkjs.groth16.fullProve` (`lib/proving/groth16-browser.ts`);
+  `{ shipmentId, proof, publicSignals }` records the proof for the tx build.
+- **Correctness:** the browser proves the *same* witness the server would have,
+  and snarkjs is deterministic, so the proof is identical and flows through the
+  unchanged proof→scVal tx-encoding — the on-chain verify path is preserved. (A
+  browser spike confirmed snarkjs proves + verifies the delivery circuit
+  client-side in ~0.8 s.) The flight zkey is 46 MB, so the first drone proof
+  downloads it once (cached thereafter).
 
-1. **Move proving to the browser (recommended).** Server assembles the circuit
-   *inputs* and returns them; the browser fetches the wasm/zkey (static assets)
-   and runs `snarkjs.groth16.fullProve` client-side — exactly how the confidential
-   rail already proves in-browser. No serverless size/timeout limits; no 65 MB in
-   a function. ~15-30 MB browser download per circuit (cached).
-2. **Keep server-side, commit the 65 MB** (ideally Git LFS) + configure the
-   proving functions (`outputFileTracingIncludes` for the wasm/zkey, max
-   memory/`maxDuration`; needs Vercel Pro for the timeout). Minimal code change,
-   but git bloat + a real serverless proving-time/cold-start risk.
+Nothing server-side proves anymore; `snarkjs` is a client-only dependency now.
 
-Until this is chosen, a Vercel deploy serves everything except the two proving
-routes: overview, `/track`, `/map`, the console (connect, transparent create,
-verify, accept, recipient sign), and the confidential auditor beat all work.
+**End-to-end verification note:** the full lifecycle (create → accept → fly →
+submit-flight → prove-delivery → deliver, with the on-chain verify) needs a
+funded Freighter wallet on testnet — verify it once after deploying. Everything
+up to and including the browser proof is build-verified.

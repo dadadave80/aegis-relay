@@ -41,10 +41,6 @@ import {
   scProof,
 } from "./soroban";
 import {
-  DELIVERY_WASM,
-  DELIVERY_ZKEY,
-  FLIGHT_WASM,
-  FLIGHT_ZKEY,
   NATIVE_SAC,
   CT_TOKEN_ID,
   METHOD_U32,
@@ -430,7 +426,27 @@ export async function signPodFlow(id: number, lat: number, lon: number): Promise
 
 // ── prove delivery (A1 Groth16) ──────────────────────────────────────────────
 
-export async function proveDeliveryFlow(id: number): Promise<{ ready: boolean }> {
+/** Deep-convert BigInt → string so a circuit witness survives JSON transport to
+ *  the browser prover (snarkjs accepts string field elements). */
+function jsonSafeInput(w: unknown): unknown {
+  if (typeof w === "bigint") return w.toString();
+  if (Array.isArray(w)) return w.map(jsonSafeInput);
+  if (w && typeof w === "object") {
+    return Object.fromEntries(
+      Object.entries(w as Record<string, unknown>).map(([k, v]) => [k, jsonSafeInput(v)]),
+    );
+  }
+  return w;
+}
+
+/**
+ * Server assembles the A1 delivery witness and returns it as the circuit INPUT
+ * for BROWSER Groth16 proving (snarkjs.groth16.fullProve on the client, against
+ * the /circuits static wasm+zkey). The browser stores the resulting proof back
+ * via recordDeliveryProofFlow before `deliver`. Proving is off the server so the
+ * multi-MB zkeys never need to live in a serverless function.
+ */
+export async function deliveryInputFlow(id: number): Promise<{ input: unknown }> {
   const rec = store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted (no carrier key)`);
@@ -444,10 +460,19 @@ export async function proveDeliveryFlow(id: number): Promise<{ ready: boolean }>
     pod: rec.pod,
     shipmentId: id,
   });
+  return { input: jsonSafeInput(witness) };
+}
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { groth16 } = (await import("snarkjs")) as any;
-  const { proof, publicSignals } = await groth16.fullProve(witness, DELIVERY_WASM, DELIVERY_ZKEY);
+/** Store a browser-generated delivery proof against the shipment. The tx-build
+ *  (`deliver`) reads it unchanged — a browser proof over the same witness is
+ *  identical to a server-generated one, so the on-chain verify path is preserved. */
+export async function recordDeliveryProofFlow(
+  id: number,
+  proof: unknown,
+  publicSignals: string[],
+): Promise<{ ready: boolean }> {
+  if (!store.getShip(id)) throw new Error(`no stored packet for shipment ${id}`);
+  if (!proof || !Array.isArray(publicSignals)) throw new Error("proof + publicSignals required");
   store.updateShip(id, { deliveryProof: { proof: proof as SnarkjsProof, publicSignals } });
   return { ready: true };
 }
@@ -458,7 +483,14 @@ const Q = 1 << 24;
 const latQtoDeg = (q: number) => (q / Q) * 180 - 90;
 const lonQtoDeg = (q: number) => (q / Q) * 360 - 180;
 
-export async function flyFlow(id: number): Promise<FlyRes> {
+/**
+ * Server builds the flight scenario (fresh telemetry over the committed corridor)
+ * and returns the waypoints (for the map) + the A2 circuit INPUT for BROWSER
+ * Groth16 proving. The browser proves and stores via recordFlightProofFlow before
+ * `submit_flight`. The fresh `t0` is baked into the witness → proof → publicSignals,
+ * so it flows to the tx consistently.
+ */
+export async function flightInputFlow(id: number): Promise<FlyRes & { input: unknown }> {
   const rec = store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   if (rec.meta.method !== "drone") throw new Error(`shipment ${id} is not a drone shipment`);
@@ -493,18 +525,31 @@ export async function flyFlow(id: number): Promise<FlyRes> {
     altDm: 800n,
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { groth16 } = (await import("snarkjs")) as any;
-  const { proof, publicSignals } = await groth16.fullProve(scenario.witness, FLIGHT_WASM, FLIGHT_ZKEY);
-  store.updateShip(id, { flightProof: { proof: proof as SnarkjsProof, publicSignals } });
-
   const lat = scenario.waypoints.lat_q;
   const lon = scenario.waypoints.lon_q;
   const waypoints = lat.map((v, i) => ({
     lat: latQtoDeg(Number(v)),
     lon: lonQtoDeg(Number(lon[i])),
   }));
-  return { waypoints, corridorRoot: scenario.corridor.root, digest: scenario.d16 };
+  return {
+    waypoints,
+    corridorRoot: scenario.corridor.root,
+    digest: scenario.d16,
+    input: jsonSafeInput(scenario.witness),
+  };
+}
+
+/** Store a browser-generated flight proof against the shipment (submit_flight
+ *  reads it unchanged). */
+export async function recordFlightProofFlow(
+  id: number,
+  proof: unknown,
+  publicSignals: string[],
+): Promise<{ ok: boolean }> {
+  if (!store.getShip(id)) throw new Error(`no stored packet for shipment ${id}`);
+  if (!proof || !Array.isArray(publicSignals)) throw new Error("proof + publicSignals required");
+  store.updateShip(id, { flightProof: { proof: proof as SnarkjsProof, publicSignals } });
+  return { ok: true };
 }
 
 // ── carrier verify (T12) ─────────────────────────────────────────────────────

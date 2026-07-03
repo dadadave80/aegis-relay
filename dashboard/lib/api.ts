@@ -4,7 +4,7 @@
 "use client";
 import type {
   ShipmentView, ActionResult, BuildTxReq, BuildTxRes, SubmitTxReq, SubmitTxRes,
-  VerifyRes, FlyRes, SignPodReq, AuditRes, ShipmentReq, RoleInfo,
+  VerifyRes, FlyInputRes, ProveInputRes, SignPodReq, AuditRes, ShipmentReq, RoleInfo,
 } from "./types";
 
 async function post<T>(path: string, body: unknown): Promise<ActionResult<T>> {
@@ -36,8 +36,14 @@ export const api = {
   // stateless server work (no custody)
   faucet:       (address: string) => post<{ funded: boolean; balanceXlm: string | null }>("/api/faucet", { address }),
   verify:       (b: ShipmentReq)  => post<VerifyRes>("/api/carrier/verify", b),
-  fly:          (b: ShipmentReq)  => post<FlyRes>("/api/drone/fly", b),
-  proveDeliver: (b: ShipmentReq)  => post<{ ready: boolean }>("/api/prove-delivery", b),
+  // Browser Groth16 proving is two-phase: fly/proveDeliver fetch the circuit
+  // input, then flyRecord/deliverRecord post the proof produced in the browser.
+  fly:          (b: ShipmentReq)  => post<FlyInputRes>("/api/drone/fly", b),
+  flyRecord:    (shipmentId: number, proof: unknown, publicSignals: string[]) =>
+                  post<{ ok: boolean }>("/api/drone/fly", { shipmentId, proof, publicSignals }),
+  proveDeliver: (b: ShipmentReq)  => post<ProveInputRes>("/api/prove-delivery", b),
+  deliverRecord:(shipmentId: number, proof: unknown, publicSignals: string[]) =>
+                  post<{ ready: boolean }>("/api/prove-delivery", { shipmentId, proof, publicSignals }),
   signPod:      (b: SignPodReq)   => post<{ signed: boolean }>("/api/recipient-pod", b),
   audit:        (b: ShipmentReq)  => post<AuditRes>("/api/confidential/audit", b),
   shipment:     (id: number)      => get<ShipmentView>(`/api/shipment/${id}`),

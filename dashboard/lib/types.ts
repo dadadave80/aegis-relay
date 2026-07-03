@@ -134,6 +134,19 @@ export interface FlyRes {
   digest: string;
 }
 
+/**
+ * Two-phase browser Groth16 proving (drone-fly + prove-delivery). Phase 1:
+ * `{ shipmentId }` → the server returns the assembled circuit `input`. The
+ * browser runs snarkjs on the /circuits static wasm+zkey. Phase 2:
+ * `{ shipmentId, proof, publicSignals }` → the server records the proof for the
+ * tx build. Keeps the multi-MB zkeys off the server (Vercel-friendly).
+ */
+export interface ProveReq { shipmentId: number; proof?: unknown; publicSignals?: string[]; }
+/** Phase-1 delivery response — the A1 circuit input for the browser prover. */
+export interface ProveInputRes { input: unknown; }
+/** Phase-1 fly response — the map waypoints + the A2 circuit input. */
+export type FlyInputRes = FlyRes & { input: unknown };
+
 export interface SignPodReq extends ShipmentReq { lat: number; lon: number; }
 
 /** POST /api/confidential/settle — release E's packet, or record a settle tx. */

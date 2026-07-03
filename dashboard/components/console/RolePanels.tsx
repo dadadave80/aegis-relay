@@ -39,6 +39,7 @@ import {
 } from "./primitives";
 import { txLink, FALLBACK_CONTRACTS } from "./config";
 import { ProofCeremony } from "@/components/ds/ProofCeremony";
+import { proveGroth16 } from "@/lib/proving/groth16-browser";
 
 // ── shared helpers ───────────────────────────────────────────────────────────
 
@@ -419,14 +420,23 @@ function CarrierPanel() {
 
   const fly = () =>
     run("fly", async () => {
+      // Phase 1: the server builds the scenario + returns waypoints + the A2 input.
       const res = await api.fly(req);
-      if (res.ok && res.data) {
-        setFlyResult(res.data);
+      if (!res.ok || !res.data) {
+        setError({ title: "Flight proof failed", detail: res.error ?? "Unknown error" });
+        return;
+      }
+      const { waypoints, corridorRoot, digest, input } = res.data;
+      setFlyResult({ waypoints, corridorRoot, digest }); // show the route immediately
+      // Phase 2: prove in the BROWSER (snarkjs + the /circuits static wasm+zkey).
+      const { proof, publicSignals } = await proveGroth16(input, "flight");
+      const rec = await api.flyRecord(currentShipmentId, proof, publicSignals);
+      if (rec.ok) {
         toast({
           title: "Flight proven",
-          detail: `${res.data.waypoints.length} telemetry points → 1 Groth16 proof`,
+          detail: `${waypoints.length} telemetry points → 1 Groth16 proof (in your browser)`,
         });
-      } else setError({ title: "Flight proof failed", detail: res.error ?? "Unknown error" });
+      } else setError({ title: "Flight proof failed", detail: rec.error ?? "Unknown error" });
     });
 
   const submitFlight = () =>
@@ -442,13 +452,20 @@ function CarrierPanel() {
 
   const prove = () =>
     run("prove", async () => {
+      // Phase 1: the server assembles the A1 witness + returns it as the input.
       const res = await api.proveDeliver(req);
-      if (res.ok && res.data?.ready) setProofReady(true);
-      else
+      if (!res.ok || !res.data) {
         setError({
           title: "Delivery proof failed",
           detail: res.error ?? "The recipient must sign the PoD first (switch to Recipient).",
         });
+        return;
+      }
+      // Phase 2: prove in the BROWSER, then record the proof for the deliver tx.
+      const { proof, publicSignals } = await proveGroth16(res.data.input, "delivery");
+      const rec = await api.deliverRecord(currentShipmentId, proof, publicSignals);
+      if (rec.ok && rec.data?.ready) setProofReady(true);
+      else setError({ title: "Delivery proof failed", detail: rec.error ?? "Unknown error" });
     });
 
   const deliver = () =>
