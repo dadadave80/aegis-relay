@@ -4,6 +4,8 @@
 
 [![CI](https://github.com/dadadave80/aegis-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/dadadave80/aegis-relay/actions/workflows/ci.yml)
 
+**▶️ [Watch the demo](https://youtu.be/SfVsJ42_iVI)** · **🔗 [Live app](https://aegis-zk-relay.vercel.app)**
+
 Global freight runs on data nobody wants to share: what is being shipped, what it is worth, who is receiving it, where they live, and which route it travels. Every one of those disclosures is an attack surface — theft targets manifests, competitors mine shipping graphs, and a published drone corridor is an interception map.
 
 Aegis Relay lets merchants, carriers, and recipients settle deliveries on Stellar while the chain learns none of it. On-chain there is only an opaque shipment commitment, an escrow, a state machine, and Groth16 proofs. Each verified proof atomically advances the shipment and releases an escrow milestone **in the same Soroban transaction** — no oracle, no off-chain settlement layer. **Aegis v1 proved solvency without revealing balances; Aegis Relay proves *movement* without revealing the map.**
@@ -98,7 +100,7 @@ Beyond the CLIs, Aegis Relay ships a **multi-sided marketplace web app** (`dashb
 
 **Groth16 proving runs in the browser.** The A1 delivery and A2 flight proofs are generated client-side with snarkjs against static wasm/zkey artifacts — the *same* witness the server would assemble, proved on the user's machine, flowing through the *unchanged* on-chain verify path — so the app is fully static-hostable (Vercel) with no serverless proving.
 
-Live demo: **https://aegis-zk-relay.vercel.app** · local: `bun install && cd dashboard && bun run dev` (deployment in [`ARCHITECTURE.md`](ARCHITECTURE.md)).
+Live demo: **https://aegis-zk-relay.vercel.app** · 📹 **[demo video](https://youtu.be/SfVsJ42_iVI)** · local: `bun install && cd dashboard && bun run dev` (deployment in [`ARCHITECTURE.md`](ARCHITECTURE.md)).
 
 ---
 
