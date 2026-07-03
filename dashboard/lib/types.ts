@@ -48,6 +48,7 @@ export interface SubmitTxRes {
   tx: string;                         // explorer tx hash / id
   shipmentId?: number;                // assigned on create
   view?: ShipmentView;
+  claimLink?: string;                 // create only: /claim/<id>#<seedHex> for the recipient
 }
 
 /** What the chain sees vs. what stays hidden — drives the money-shot panel. */
@@ -206,4 +207,16 @@ export interface CarrierStatus {
 export interface Reputation {
   delivered: number;
   expired: number;
+}
+
+/** POST /api/market — credential-gated packet claim. */
+export interface MarketClaimReq { shipmentId: number; }
+export interface MarketClaimRes { packet: unknown; }
+
+/** POST /api/claim — recipient stores the in-browser PoD signature. */
+export interface PodSignReq {
+  shipmentId: number;
+  signature: unknown;
+  lat: number;
+  lon: number;
 }

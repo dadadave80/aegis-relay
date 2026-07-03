@@ -63,7 +63,9 @@ import type {
   FlyRes,
   AuditRes,
   ConfSettleRelease,
+  ClaimContext,
 } from "../types";
+import { buildListing } from "../listing";
 
 // ── response envelope (matches lib/types.ts ActionResult) ────────────────────
 
@@ -369,14 +371,46 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
   const res = await submitSignedXdr(req.signedXdr, pend.xdr);
 
   let shipmentId: number | undefined;
+  let claimLink: string | undefined;
   if (pend.action === "create") {
     const idRaw = res.returnValue;
     const id = typeof idRaw === "bigint" ? idRaw.toString() : String(idRaw ?? "");
     if (!id || id === "null") throw new Error("create succeeded but no shipment id in return value");
     shipmentId = Number(id);
     const packet = pend.packet!;
+    const meta = pend.meta!;
     packet.shipment_id = id;
-    await store.putShip({ shipmentId: id, packet, meta: pend.meta!, createdTx: res.hash, escrow: pend.escrow });
+    await store.putShip({ shipmentId: id, packet, meta, createdTx: res.hash, escrow: pend.escrow });
+
+    // ── Marketplace: publish the OPEN board listing (spec §6.1) ──
+    const createdAt = Date.now();
+    const listing = buildListing({
+      shipmentId,
+      rail: meta.rail,
+      method: meta.method,
+      laneId: meta.laneId,
+      amountXlm: meta.amountXlm, // null'd for the confidential rail inside buildListing
+      escrowDeadline: Number(meta.escrowDeadline),
+      createdAt,
+    });
+    await store.putListing(listing);
+    await store.addOpenListing(id, createdAt);
+
+    // Recipient signing context — deliberately WITHOUT the claim seed. Only the
+    // dest-region root is exposed (minimal disclosure, §13; the recipient derives
+    // cell_rd from their own confirmed location). carrier_pk_commit is bound at accept.
+    const ctx: ClaimContext = {
+      shipmentId,
+      carrierPkCommit: "",
+      destRegion: packet.dest_region.root,
+      tsWindow: Number(meta.escrowDeadline),
+    };
+    await store.putClaimContext(id, ctx);
+
+    // The claim SEED travels ONLY in the link fragment — never sent to or stored by
+    // the server (§5 honesty). Surfaced here so the merchant UI can hand the link
+    // to the recipient. The id exists only now (create_shipment return value).
+    claimLink = `/claim/${id}#${packet.recipient_claim.eddsa_seed_hex}`;
   } else if (pend.action === "accept" && pend.shipmentId) {
     const rec = await store.getShip(pend.shipmentId);
     if (rec && pend.carrierBJJ) {
@@ -384,6 +418,23 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
       await store.putShip({ ...rec, carrierBJJ: pend.carrierBJJ, acceptTx: res.hash });
     }
     shipmentId = Number(pend.shipmentId);
+
+    // ── Marketplace: the shipment leaves the board; listing → IN_TRANSIT + payout ──
+    await store.removeOpenListing(pend.shipmentId);
+    const listing = await store.getListing(pend.shipmentId);
+    if (listing) {
+      listing.state = "IN_TRANSIT";
+      listing.payout = pend.source; // payout == the connected carrier wallet (buildAccept)
+      await store.putListing(listing);
+    }
+    // Complete the recipient signing context now that a carrier is bound.
+    if (pend.carrierBJJ) {
+      const ctx = await store.getClaimContext(pend.shipmentId);
+      if (ctx) {
+        ctx.carrierPkCommit = pend.carrierBJJ.commit;
+        await store.putClaimContext(pend.shipmentId, ctx);
+      }
+    }
   } else if (pend.shipmentId) {
     const patch = pend.action === "submitFlight" ? { flightTx: res.hash } : { deliverTx: res.hash };
     await store.updateShip(pend.shipmentId, patch);
@@ -392,7 +443,7 @@ export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
 
   await store.delPending(req.buildId);
   const view = shipmentId !== undefined ? await shipmentView(shipmentId) : undefined;
-  return { tx: res.hash, shipmentId, view };
+  return { tx: res.hash, shipmentId, view, claimLink };
 }
 
 // ── recipient PoD (Baby Jubjub signature, no Stellar tx) ──────────────────────
