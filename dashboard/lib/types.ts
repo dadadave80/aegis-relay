@@ -220,3 +220,13 @@ export interface PodSignReq {
   lat: number;
   lon: number;
 }
+
+/**
+ * POST /api/market claim result. Credentialed carriers get the sealed packet
+ * (recipient claim seed already stripped, Task 5); non-credentialed callers get
+ * a structured onboarding CTA — never a bare error (spec §10). The `packet`
+ * arm is exactly MarketClaimRes plus a `credentialed` discriminator.
+ */
+export type MarketClaimResult =
+  | ({ credentialed: true } & MarketClaimRes)
+  | { credentialed: false; onboard: { title: string; cta: string; href: string } };

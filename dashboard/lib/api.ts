@@ -5,6 +5,7 @@
 import type {
   ShipmentView, ActionResult, BuildTxReq, BuildTxRes, SubmitTxReq, SubmitTxRes,
   VerifyRes, FlyInputRes, ProveInputRes, SignPodReq, AuditRes, ShipmentReq, RoleInfo,
+  Listing, MarketClaimResult,
 } from "./types";
 
 async function post<T>(path: string, body: unknown): Promise<ActionResult<T>> {
@@ -48,4 +49,10 @@ export const api = {
   audit:        (b: ShipmentReq)  => post<AuditRes>("/api/confidential/audit", b),
   shipment:     (id: number)      => get<ShipmentView>(`/api/shipment/${id}`),
   roleInfo:     (address: string) => get<RoleInfo>(`/api/role?address=${encodeURIComponent(address)}`),
+  // marketplace board + credential-gated claim (Task 5)
+  market: {
+    list:  ()                                    => get<Listing[]>("/api/market"),
+    claim: (shipmentId: number, address: string) =>
+             post<MarketClaimResult>("/api/market", { shipmentId, address }),
+  },
 };

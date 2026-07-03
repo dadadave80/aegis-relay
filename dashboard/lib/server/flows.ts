@@ -64,8 +64,11 @@ import type {
   AuditRes,
   ConfSettleRelease,
   ClaimContext,
+  Listing,
+  MarketClaimResult,
 } from "../types";
 import { buildListing } from "../listing";
+import { decideClaim } from "../market/claim-gate";
 
 // ── response envelope (matches lib/types.ts ActionResult) ────────────────────
 
@@ -682,4 +685,52 @@ export async function releaseEscrowFlow(shipmentId: number): Promise<ConfSettleR
 export async function recordSettleFlow(shipmentId: number, settleTx: string): Promise<{ recorded: boolean }> {
   const updated = await store.updateShip(shipmentId, { settleTx });
   return { recorded: updated !== undefined };
+}
+
+// ── market board (Task 5) ─────────────────────────────────────────────────────
+
+/**
+ * GET /api/market — the carrier board. Reads the openListings index and hydrates
+ * each row from its listing:<id> summary (only on-chain-public metadata; amount is
+ * null on the confidential rail — spec §9). Newest first. The KV index is a fast
+ * cache over the registry, which stays the source of truth.
+ */
+export async function marketListFlow(): Promise<Listing[]> {
+  const ids = await store.listOpenListings();
+  const rows: Listing[] = [];
+  for (const id of ids) {
+    const l = await store.getListing(id);
+    if (l) rows.push(l);
+  }
+  rows.sort((a, b) => b.createdAt - a.createdAt);
+  return rows;
+}
+
+/**
+ * POST /api/market — credential-gated claim. A credentialed carrier receives the
+ * sealed packet (recipient claim seed stripped) to verify T12 and then accept;
+ * a non-credentialed caller gets a structured onboarding CTA (spec §3/§9/§10).
+ * `address` is the connected wallet (the caller identity).
+ *
+ * store.ts is KV-backed and fully async (Task 2), but the pure claim-gate's
+ * `revealPacket` thunk is synchronous (so its bun:test stays sync — see
+ * claim-gate.test.ts). So the credential check runs first and short-circuits
+ * before ever touching the store for a non-credentialed caller; only once
+ * credentialed do we `await store.getShip` and hand the already-resolved
+ * packet to decideClaim's thunk.
+ */
+export async function marketClaimFlow(
+  shipmentId: number,
+  address: string,
+): Promise<MarketClaimResult> {
+  if (!address) throw new Error("address (connected wallet) required");
+  const carrier = await store.getCarrier(address);
+  if (!carrier.credentialed) {
+    return decideClaim(false, () => undefined);
+  }
+  const rec = await store.getShip(shipmentId);
+  if (!rec) {
+    throw new Error(`no stored packet for shipment ${shipmentId} — create it via this server first`);
+  }
+  return decideClaim(true, () => rec.packet);
 }
