@@ -12,7 +12,9 @@
  * disables while running, and renders failures inline (never crashes).
  */
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { claimUrl } from "@/lib/console/deep-link";
 import { api } from "@/lib/api";
 import type {
   AuditRes,
@@ -27,6 +29,7 @@ import type {
 import { useSession } from "@/lib/session-context";
 import { useWallet } from "@/lib/wallet-context";
 import { useWalletFlows } from "@/lib/wallet-flows";
+import { CarrierRep } from "@/components/market/CarrierRep";
 import { useToast } from "./toast";
 import {
   ActionButton,
@@ -40,6 +43,7 @@ import {
 import { txLink, FALLBACK_CONTRACTS } from "./config";
 import { ProofCeremony } from "@/components/ds/ProofCeremony";
 import { proveGroth16 } from "@/lib/proving/groth16-browser";
+import { refundEligibility, fmtRemaining } from "@/lib/disputes";
 
 // ── shared helpers ───────────────────────────────────────────────────────────
 
@@ -146,10 +150,71 @@ function Result({ tone = "verified", children }: { tone?: "verified" | "caution"
   );
 }
 
+/** Post-create Merchant surface: listing status + the copyable recipient claim
+ *  link. The seed lives only in the URL fragment (`#…`) — never on the server. */
+function ClaimLinkCard({ shipmentId, claimLink }: { shipmentId: number; claimLink: string | null }) {
+  const [copied, setCopied] = useState(false);
+  const url =
+    claimLink !== null && typeof window !== "undefined"
+      ? claimUrl(window.location.origin, claimLink)
+      : claimLink;
+  const copy = () => {
+    if (url && typeof navigator !== "undefined" && navigator.clipboard) {
+      void navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    }
+  };
+  return (
+    <Result>
+      <div className="flex flex-wrap items-center gap-2" style={{ marginBottom: 10 }}>
+        <span className="stamp" style={{ color: "var(--verified)" }}>Listed · OPEN</span>
+        <span className="text-xs" style={{ color: "var(--ink-dim)" }}>
+          Shipment <span className="mono">#{shipmentId}</span> is live on the{" "}
+          <Link href="/market" className="hover:underline" style={{ color: "var(--seal)" }}>carrier market</Link>{" "}
+          — a credentialed carrier can claim it now.
+        </span>
+      </div>
+
+      {url ? (
+        <>
+          <div className="stamp" style={{ color: "var(--chain-dim)" }}>Recipient claim link</div>
+          <p className="text-xs" style={{ margin: "4px 0 10px", color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
+            Send this to the recipient. The signing seed rides in the URL fragment (after the{" "}
+            <span className="mono">#</span>) and never reaches the server.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              readOnly
+              value={url}
+              onFocus={(e) => e.currentTarget.select()}
+              aria-label="Recipient claim link"
+              className="mono w-full min-w-0 rounded-[var(--r-control)] px-3 py-2.5 text-xs outline-none border hairline"
+              style={{ background: "var(--void-0)", color: "var(--ink)" }}
+            />
+            <button
+              onClick={copy}
+              style={{ minHeight: 40, padding: "0 14px", borderRadius: "var(--r-control)", border: "1px solid var(--hairline)", background: "var(--void-1)", color: copied ? "var(--verified)" : "var(--ink-dim)", fontSize: "var(--text-sm)", cursor: "pointer", whiteSpace: "nowrap" }}
+            >
+              {copied ? "Copied ✓" : "Copy"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="text-xs" style={{ margin: 0, color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
+          Recipient claim link unavailable for this shipment.
+        </p>
+      )}
+    </Result>
+  );
+}
+
 // ── Merchant ─────────────────────────────────────────────────────────────────
 
 function MerchantPanel() {
   const {
+    currentShipmentId,
+    shipment,
     setCurrentShipmentId,
     setCreatedDest,
     applyView,
@@ -168,11 +233,13 @@ function MerchantPanel() {
   const [method, setMethod] = useState<Method>("drone");
   const [rail, setRail] = useState<Rail>("transparent");
   const [deadline, setDeadline] = useState("24");
+  const [created, setCreated] = useState<{ shipmentId: number; claimLink: string | null } | null>(null);
 
   const walletReady = !!stellarAddress;
 
   const create = () =>
     run("create", async () => {
+      setCreated(null);
       const amt = Number(amount);
       if (!Number.isFinite(amt) || amt <= 0) {
         setError({ title: "Invalid amount", detail: "Enter a positive XLM amount." });
@@ -194,6 +261,10 @@ function MerchantPanel() {
         const { shipmentId, view } = res.data;
         setCurrentShipmentId(shipmentId);
         setCreatedDest(shipmentId, { lat: Number(toLat), lon: Number(toLon) });
+        setCreated({
+          shipmentId,
+          claimLink: (res.data as { claimLink?: string }).claimLink ?? null,
+        });
         if (view) applyView(view);
         toast({
           title: `Shipment #${shipmentId} created`,
@@ -288,12 +359,169 @@ function MerchantPanel() {
         Create shipment
       </ActionButton>
 
+      {created && <ClaimLinkCard shipmentId={created.shipmentId} claimLink={created.claimLink} />}
+
       {method === "drone" && (
         <Honesty>
           SIMULATED drone secure element — the proof binds a key, not physics.
         </Honesty>
       )}
+
+      {currentShipmentId !== null && shipment && (
+        <div
+          className="space-y-3"
+          style={{ borderTop: "1px solid var(--hairline)", paddingTop: 20 }}
+        >
+          <SectionLabel>Disputes — shipment #{currentShipmentId}</SectionLabel>
+          <MerchantDisputes shipmentId={currentShipmentId} view={shipment} />
+        </div>
+      )}
     </Panel>
+  );
+}
+
+// ── Merchant disputes (thin) ─────────────────────────────────────────────────
+
+function MerchantDisputes({ shipmentId, view }: { shipmentId: number; view: ShipmentView }) {
+  const { applyView, refreshShipment } = useSession();
+  const { stellarAddress } = useWallet();
+  const flows = useWalletFlows();
+  const { toast } = useToast();
+  const { runningKey, error, setError, run } = useRunner();
+  const [reason, setReason] = useState("");
+  const [reported, setReported] = useState(false);
+  const walletReady = !!stellarAddress;
+
+  // "now" is a tick, not a render-time Date.now() read (react-hooks/purity) —
+  // it also keeps the before-deadline countdown live without extra polling.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const t = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const elig = refundEligibility(view, nowSec);
+
+  const refund = () =>
+    run("refund", async () => {
+      const res = await flows.refund(shipmentId);
+      if (res.ok && res.data) {
+        if (res.data.view) applyView(res.data.view);
+        void refreshShipment();
+        toast({
+          title: "Escrow refunded",
+          detail: "deadline passed — remaining escrow returned to the merchant",
+        });
+      } else setError({ title: "Refund failed", detail: res.error ?? "Unknown error" });
+    });
+
+  const report = () =>
+    run("report", async () => {
+      const res = await api.report({ shipmentId, reason });
+      if (res.ok && res.data?.reported) {
+        setReported(true);
+        toast({ title: "Report filed", detail: `flagged shipment #${shipmentId} for review` });
+      } else setError({ title: "Report failed", detail: res.error ?? "Unknown error" });
+    });
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm" style={{ color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
+        If the deadline passes with no delivery, reclaim the escrowed payment. This
+        wraps the registry&apos;s <span className="mono">refund_expired</span> — the
+        remaining escrow always returns to the merchant.
+      </p>
+
+      {elig.kind === "eligible" && (
+        <>
+          {!walletReady && <NeedWallet />}
+          <ActionButton
+            variant="danger"
+            onClick={refund}
+            disabled={!walletReady}
+            loading={runningKey === "refund"}
+            loadingLabel="Signing refund…"
+            className="w-full sm:w-auto"
+          >
+            Refund (deadline passed)
+          </ActionButton>
+        </>
+      )}
+      {elig.kind === "before-deadline" && (
+        <Notice>
+          Deadline in <span className="mono">{fmtRemaining(elig.secondsRemaining)}</span>.
+          The refund unlocks only after it passes — the registry rejects an early
+          call (<span className="mono">DeadlineNotPassed</span>).
+        </Notice>
+      )}
+      {elig.kind === "already-expired" && (
+        <Result tone="caution">
+          Already expired — the remaining escrow has been returned to the merchant.
+        </Result>
+      )}
+      {elig.kind === "not-refundable" && (
+        <Notice>
+          {view.state === "DELIVERED"
+            ? "Delivered and settled — there is nothing to refund."
+            : "This shipment is not in a refundable state."}
+        </Notice>
+      )}
+
+      <div className="space-y-2" style={{ borderTop: "1px solid var(--hairline)", paddingTop: 16 }}>
+        <Field
+          label="Report an issue"
+          hint="sets a thin-dispute flag on ship:<id> — deep arbitration is a follow-on"
+        >
+          <TextInput
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. package never arrived"
+          />
+        </Field>
+        <ActionButton
+          variant="ghost"
+          onClick={report}
+          disabled={!reason.trim() || reported}
+          loading={runningKey === "report"}
+          loadingLabel="Filing report…"
+        >
+          {reported ? "Reported ✓" : "Report shipment"}
+        </ActionButton>
+        {reported && (
+          <Result>
+            ✓ Report filed against shipment #{shipmentId} — a reviewer can read the
+            flag from the mailbox.
+          </Result>
+        )}
+      </div>
+
+      {error && <InlineError title={error.title} detail={error.detail} />}
+    </div>
+  );
+}
+
+/** Carrier no-shipment state: carriers discover jobs on the market, not via a
+ *  raw id box. Deep-links to /market; a claim there returns with ?claimed=<id>. */
+function ClaimFromMarket() {
+  return (
+    <div
+      className="text-sm space-y-4"
+      style={{ background: "var(--void-0)", border: "1px solid var(--hairline)", borderRadius: "var(--r-control)", padding: 16, color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}
+    >
+      <p style={{ margin: 0 }}>
+        Carriers don&apos;t get handed a shipment id — you{" "}
+        <span style={{ color: "var(--ink)" }}>discover</span> open jobs on the market and
+        claim one. Claiming focuses it here with <span className="mono">Accept</span> unlocked
+        (first valid accept wins on-chain).
+      </p>
+      <Link
+        href="/market"
+        className="inline-flex items-center justify-center gap-2 rounded-[var(--r-control)] px-[18px] py-2.5 text-sm font-semibold min-h-[44px] transition-transform active:scale-[0.98]"
+        style={{ background: "var(--seal)", color: "#0B0716" }}
+      >
+        Claim from market →
+      </Link>
+    </div>
   );
 }
 
@@ -380,9 +608,9 @@ function CarrierPanel() {
       <Panel
         title="Carrier — take custody & prove compliance"
       temp="neutral"
-        subtitle="Verify the sealed packet against the on-chain commitment, accept custody, prove the flight, then prove delivery."
+        subtitle="Discover an open shipment on the market and claim it — then verify the sealed packet, accept custody, prove the flight, and prove delivery."
       >
-        <NeedShipment />
+        <ClaimFromMarket />
       </Panel>
     );
   }
@@ -503,6 +731,11 @@ function CarrierPanel() {
       subtitle="Buttons unlock in lifecycle order. Your wallet signs custody moves; each proof verifies and settles on-chain in a single Soroban transaction."
     >
       {!walletReady && <NeedWallet />}
+      {stellarAddress && (
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 0 6px" }}>
+          <CarrierRep address={stellarAddress} />
+        </div>
+      )}
       {error && <InlineError title={error.title} detail={error.detail} />}
 
       {ceremonyTx && (
@@ -642,12 +875,7 @@ function CarrierPanel() {
 // ── Recipient ────────────────────────────────────────────────────────────────
 
 function RecipientPanel() {
-  const { currentShipmentId, shipment, createdDest } = useSession();
-  const { toast } = useToast();
-  const { runningKey, error, setError, run } = useRunner();
-  const [signed, setSigned] = useState(false);
-  const [lat, setLat] = useState(String(createdDest?.lat ?? 6.5244));
-  const [lon, setLon] = useState(String(createdDest?.lon ?? 3.3792));
+  const { currentShipmentId, shipment } = useSession();
 
   if (currentShipmentId === null || !shipment) {
     return (
@@ -660,57 +888,34 @@ function RecipientPanel() {
     );
   }
 
-  const sign = () =>
-    run("sign", async () => {
-      const res = await api.signPod({
-        shipmentId: currentShipmentId,
-        lat: Number(lat),
-        lon: Number(lon),
-      });
-      if (res.ok && res.data?.signed) {
-        setSigned(true);
-        toast({ title: "Receipt signed", detail: "the carrier can now prove delivery" });
-      } else setError({ title: "Signing failed", detail: res.error ?? "Unknown error" });
-    });
-
   return (
     <Panel
       title="Recipient — sign proof of delivery"
       subtitle="The recipient's device signs one Poseidon message with the claim key issued by the merchant. The chain never sees the signature, the key, or the location — only a proof it all checks out."
     >
-      <div className="grid sm:grid-cols-2 gap-4">
-        <Field label="Signing lat" hint="must fall inside the committed destination region">
-          <TextInput value={lat} onChange={(e) => setLat(e.target.value)} inputMode="decimal" />
-        </Field>
-        <Field label="Signing lon">
-          <TextInput value={lon} onChange={(e) => setLon(e.target.value)} inputMode="decimal" />
-        </Field>
-      </div>
+      <Result>
+        Signing now happens on the recipient&apos;s own device, not in this console.
+        The merchant&apos;s claim link (
+        <span className="mono">/claim/{currentShipmentId}#&lt;seed&gt;</span>) carries
+        the one-time claim key in its URL fragment — open it as the recipient to sign
+        proof of delivery in the browser.
+      </Result>
 
-      {error && <InlineError title={error.title} detail={error.detail} />}
-
-      <ActionButton
-        onClick={sign}
-        loading={runningKey === "sign"}
-        loadingLabel="Signing PoD message…"
-        className="w-full sm:w-auto"
+      <a
+        href={`/claim/${currentShipmentId}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mono hover:underline"
+        style={{ color: "var(--mint)" }}
       >
-        Sign proof of delivery
-      </ActionButton>
-
-      {signed && (
-        <Result>
-          ✓ Receipt signed — bound to this carrier, this place, this moment. Switch
-          to <span style={{ color: "var(--mint)" }}>Carrier</span> to prove and
-          settle delivery.
-        </Result>
-      )}
+        open the claim page (needs the #seed from creation) ↗
+      </a>
 
       <Honesty>
         The PoD is a Baby Jubjub (circuit) signature, not a Stellar tx — the
-        recipient never transacts on-chain. In production this signing lives in
-        the recipient&apos;s wallet PWA behind the claim link; the demo signs it
-        on the stateless server with the same claim key, message and proof.
+        recipient never transacts on-chain. The claim seed lives only in the
+        claim link&apos;s URL fragment; the server never stores or sees it —
+        there is no server-side signing shortcut left in this console.
       </Honesty>
     </Panel>
   );

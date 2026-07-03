@@ -17,9 +17,11 @@ import {
   verifyPacket,
   sampleFieldSalt,
 } from "./prover-dist/carrier.js";
-import { signPod, type Pod } from "./prover-dist/recipient.js";
+import type { Pod } from "./prover-dist/recipient.js";
 import { pkCommit } from "./prover-dist/lib/poseidon.js";
-import { latLonToQ } from "./prover-dist/lib/tree.js";
+import { latLonToQ, mortonCell } from "./prover-dist/lib/tree.js";
+import { RD_RES } from "./prover-dist/lib/constants.js";
+import { podRecord, type PodEnvelope } from "../pod/pod-record";
 import {
   buildFlightScenario,
   deriveDroneKey,
@@ -63,7 +65,16 @@ import type {
   FlyRes,
   AuditRes,
   ConfSettleRelease,
+  ClaimContext,
+  PodSignReq,
+  Listing,
+  MarketClaimResult,
+  CarrierStatus,
+  Reputation,
 } from "../types";
+import { isValidStellarAddress } from "../carrier-gate";
+import { buildListing } from "../listing";
+import { decideClaim } from "../market/claim-gate";
 
 // ── response envelope (matches lib/types.ts ActionResult) ────────────────────
 
@@ -123,7 +134,7 @@ export async function shipmentView(id: number | string): Promise<ShipmentView | 
   const res = await readShipmentRaw(id);
   if (!res.ok) return undefined;
   const raw = res.raw;
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
 
   const state = asNumber(raw.state);
   const method = asNumber(raw.method, 1);
@@ -230,7 +241,7 @@ async function buildCreate(source: string, p: Partial<CreateParams>): Promise<Bu
     amountStroops,
     escrowDeadline: built.escrowDeadline,
   };
-  store.putPending({
+  await store.putPending({
     buildId: tx.buildId,
     action: "create",
     source,
@@ -296,7 +307,7 @@ async function buildConfidentialCreate(source: string, p: Partial<CreateParams>)
     amountStroops: "0", // registry amount is 0
     escrowDeadline: built.escrowDeadline,
   };
-  store.putPending({
+  await store.putPending({
     buildId: tx.buildId,
     action: "create",
     source,
@@ -313,7 +324,7 @@ async function buildConfidentialCreate(source: string, p: Partial<CreateParams>)
 }
 
 async function buildAccept(source: string, id: number): Promise<BuildTxRes> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id} — create it via this server first`);
   const carrierBJJ = await makeCarrierBJJ();
   const args = [
@@ -323,7 +334,7 @@ async function buildAccept(source: string, id: number): Promise<BuildTxRes> {
     scU256(carrierBJJ.commit),
   ];
   const tx = await buildInvoke("accept", source, args);
-  store.putPending({
+  await store.putPending({
     buildId: tx.buildId,
     action: "accept",
     source,
@@ -335,92 +346,236 @@ async function buildAccept(source: string, id: number): Promise<BuildTxRes> {
 }
 
 async function buildSubmitFlight(source: string, id: number): Promise<BuildTxRes> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec?.flightProof) throw new Error(`no flight proof for shipment ${id} — run /api/drone/fly first`);
   const pub = rec.flightProof.publicSignals; // [id, c_s, head, corridor_root, t_0, t_n]
   const args = [scU64(id), scProof(rec.flightProof.proof), scU64(pub[4]), scU64(pub[5])];
   const tx = await buildInvoke("submit_flight", source, args);
-  store.putPending({ buildId: tx.buildId, action: "submitFlight", source, xdr: tx.xdr, shipmentId: String(id) });
+  await store.putPending({ buildId: tx.buildId, action: "submitFlight", source, xdr: tx.xdr, shipmentId: String(id) });
   return { buildId: tx.buildId, xdr: tx.xdr };
 }
 
 async function buildDeliver(source: string, id: number): Promise<BuildTxRes> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec?.deliveryProof) throw new Error(`no delivery proof for shipment ${id} — run /api/prove-delivery first`);
   const pub = rec.deliveryProof.publicSignals; // [id, c_s, head, nullifier, ts]
   const args = [scU64(id), scProof(rec.deliveryProof.proof), scU256(pub[3]), scU64(pub[4])];
   const tx = await buildInvoke("deliver", source, args);
-  store.putPending({ buildId: tx.buildId, action: "deliver", source, xdr: tx.xdr, shipmentId: String(id) });
+  await store.putPending({ buildId: tx.buildId, action: "deliver", source, xdr: tx.xdr, shipmentId: String(id) });
   return { buildId: tx.buildId, xdr: tx.xdr };
 }
 
 async function buildRefund(source: string, id: number): Promise<BuildTxRes> {
   const args = [scU64(id)];
   const tx = await buildInvoke("refund_expired", source, args);
-  store.putPending({ buildId: tx.buildId, action: "refund", source, xdr: tx.xdr, shipmentId: String(id) });
+  await store.putPending({ buildId: tx.buildId, action: "refund", source, xdr: tx.xdr, shipmentId: String(id) });
   return { buildId: tx.buildId, xdr: tx.xdr };
 }
 
 // ── submit (attach signature, persist packet on create) ──────────────────────
 
 export async function submitAction(req: SubmitTxReq): Promise<SubmitTxRes> {
-  const pend = store.getPending(req.buildId);
+  const pend = await store.getPending(req.buildId);
   if (!pend) throw new Error(`no pending tx for buildId ${req.buildId}`);
   const res = await submitSignedXdr(req.signedXdr, pend.xdr);
 
   let shipmentId: number | undefined;
+  let claimLink: string | undefined;
   if (pend.action === "create") {
     const idRaw = res.returnValue;
     const id = typeof idRaw === "bigint" ? idRaw.toString() : String(idRaw ?? "");
     if (!id || id === "null") throw new Error("create succeeded but no shipment id in return value");
     shipmentId = Number(id);
     const packet = pend.packet!;
+    const meta = pend.meta!;
     packet.shipment_id = id;
-    store.putShip({ shipmentId: id, packet, meta: pend.meta!, createdTx: res.hash, escrow: pend.escrow });
+
+    // The server never holds the recipient's claim seed once the shipment
+    // exists (Task 3 review: "server never holds the seed"). Capture it ONLY
+    // to mint the claim link below, then persist a stripped copy of the
+    // packet — assembleDeliveryWitness/verifyPacket read cs_opening/
+    // dest_region/pod, never recipient_claim, so the delivery path is
+    // unaffected by the strip.
+    const claimSeedHex = packet.recipient_claim.eddsa_seed_hex;
+    const persistedPacket = { ...packet, recipient_claim: { eddsa_seed_hex: "" } };
+    await store.putShip({ shipmentId: id, packet: persistedPacket, meta, createdTx: res.hash, escrow: pend.escrow });
+
+    // ── Marketplace: publish the OPEN board listing (spec §6.1) ──
+    const createdAt = Date.now();
+    const listing = buildListing({
+      shipmentId,
+      rail: meta.rail,
+      method: meta.method,
+      laneId: meta.laneId,
+      amountXlm: meta.amountXlm, // null'd for the confidential rail inside buildListing
+      escrowDeadline: Number(meta.escrowDeadline),
+      createdAt,
+    });
+    await store.putListing(listing);
+    await store.addOpenListing(id, createdAt);
+
+    // Recipient signing context — deliberately WITHOUT the claim seed. Only the
+    // dest-region root is exposed (minimal disclosure, §13; the recipient derives
+    // cell_rd from their own confirmed location). carrier_pk_commit is bound at accept.
+    const ctx: ClaimContext = {
+      shipmentId,
+      carrierPkCommit: "",
+      destRegion: packet.dest_region.root,
+      tsWindow: Number(meta.escrowDeadline),
+    };
+    await store.putClaimContext(id, ctx);
+
+    // The claim SEED travels ONLY in the link fragment — never sent to or stored by
+    // the server (§5 honesty). Surfaced here so the merchant UI can hand the link
+    // to the recipient. The id exists only now (create_shipment return value).
+    claimLink = `/claim/${id}#${claimSeedHex}`;
   } else if (pend.action === "accept" && pend.shipmentId) {
-    const rec = store.getShip(pend.shipmentId);
+    const rec = await store.getShip(pend.shipmentId);
     if (rec && pend.carrierBJJ) {
       rec.packet.carrier_pk_commit = pend.carrierBJJ.commit;
-      store.putShip({ ...rec, carrierBJJ: pend.carrierBJJ, acceptTx: res.hash });
+      await store.putShip({ ...rec, carrierBJJ: pend.carrierBJJ, acceptTx: res.hash });
     }
     shipmentId = Number(pend.shipmentId);
+
+    // ── Marketplace: the shipment leaves the board; listing → IN_TRANSIT + payout ──
+    await store.removeOpenListing(pend.shipmentId);
+    const listing = await store.getListing(pend.shipmentId);
+    if (listing) {
+      listing.state = "IN_TRANSIT";
+      listing.payout = pend.source; // payout == the connected carrier wallet (buildAccept)
+      await store.putListing(listing);
+    }
+    // Complete the recipient signing context now that a carrier is bound: the
+    // create-time stub only has the dest-region ROOT (no carrier yet); fill in
+    // carrierPkCommit AND reshape destRegion into { lat, lon, cellRd } — the
+    // exact fields claimContextFlow/the /claim page/signPodBrowser need. (rec
+    // is the just-fetched-above ShipRecord; reused, no extra store round-trip.)
+    if (pend.carrierBJJ) {
+      const ctx = await store.getClaimContext(pend.shipmentId);
+      if (ctx) {
+        ctx.carrierPkCommit = pend.carrierBJJ.commit;
+        if (rec) {
+          const { latQ, lonQ } = latLonToQ(rec.meta.toLat, rec.meta.toLon);
+          ctx.destRegion = {
+            lat: rec.meta.toLat,
+            lon: rec.meta.toLon,
+            cellRd: mortonCell(latQ, lonQ, RD_RES).toString(),
+          };
+        }
+        await store.putClaimContext(pend.shipmentId, ctx);
+      }
+    }
   } else if (pend.shipmentId) {
     const patch = pend.action === "submitFlight" ? { flightTx: res.hash } : { deliverTx: res.hash };
-    store.updateShip(pend.shipmentId, patch);
+    await store.updateShip(pend.shipmentId, patch);
     shipmentId = Number(pend.shipmentId);
   }
 
-  store.delPending(req.buildId);
+  await store.delPending(req.buildId);
   const view = shipmentId !== undefined ? await shipmentView(shipmentId) : undefined;
-  return { tx: res.hash, shipmentId, view };
-}
 
-// ── recipient PoD (Baby Jubjub signature, no Stellar tx) ──────────────────────
-
-export async function signPodFlow(id: number, lat: number, lon: number): Promise<{ signed: boolean }> {
-  const rec = store.getShip(id);
-  if (!rec) throw new Error(`no stored packet for shipment ${id}`);
-  if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted yet (no carrier commit)`);
-
-  // ts must be > accept_ts and within the on-chain freshness window.
-  const nowSec = Math.floor(Date.now() / 1000);
-  let ts = nowSec;
-  const raw = await readShipmentRaw(id);
-  if (raw.ok) {
-    const acceptTs = asNumber(raw.raw.accept_ts);
-    if (ts <= acceptTs) ts = acceptTs + 1;
+  // Reputation sync on terminal transitions (Task 9). A DELIVERED settle credits
+  // the payout carrier; an EXPIRED refund debits the carrier that accepted but let
+  // the deadline pass. A never-accepted shipment that expires has no payout → no-op.
+  // Gated on the freshly-read on-chain state so a bump only lands when the transition
+  // actually occurred (the tx submitted above).
+  if (view?.payout) {
+    if (pend.action === "deliver" && view.state === "DELIVERED") {
+      await store.bumpRep(view.payout, "delivered");
+    } else if (pend.action === "refund" && view.state === "EXPIRED") {
+      await store.bumpRep(view.payout, "expired");
+    }
   }
 
-  const { latQ, lonQ } = latLonToQ(lat, lon);
-  const pod: Pod = await signPod({
-    claimSeedHex: rec.packet.recipient_claim.eddsa_seed_hex,
+  return { tx: res.hash, shipmentId, view, claimLink };
+}
+
+// ── recipient claim link (GET context + in-browser PoD store) ────────────────
+
+/**
+ * True once a KV-stored ClaimContext has been completed at accept-time:
+ * carrierPkCommit bound + destRegion reshaped to { lat, lon, cellRd } (see
+ * submitAction's accept branch). The create-time stub has an empty commit and
+ * a bare dest-region ROOT string — never signable — so it must NOT be served
+ * as-is; falling through to the mailbox-packet derivation below both gates
+ * gracefully ("no carrier yet") and self-heals if the accept-time patch above
+ * were ever missed.
+ */
+function isCompleteClaimContext(ctx: ClaimContext): boolean {
+  return (
+    Boolean(ctx.carrierPkCommit) &&
+    typeof ctx.destRegion === "object" &&
+    ctx.destRegion !== null &&
+    "cellRd" in (ctx.destRegion as Record<string, unknown>)
+  );
+}
+
+/**
+ * Signing context for the recipient claim page (/claim/<id>). Returns ONLY what
+ * the browser needs to sign the PoD — the carrier commit, the committed dest
+ * region cell (cell_rd) + its coords for the location confirm, and the ts to
+ * sign at. NEVER the claim seed (that rides the URL fragment, client-only). A
+ * COMPLETE create-time context in KV wins; otherwise it is derived fresh from
+ * the mailbox packet (also the graceful "no carrier yet" path pre-accept).
+ */
+export async function claimContextFlow(id: number): Promise<ClaimContext> {
+  if (!Number.isInteger(id) || id < 1) throw new Error(`not a shipment id: ${id}`);
+
+  // tsWindow is time-relative — it can NEVER be treated as "complete" and
+  // stored/reused verbatim. The registry enforces |now - ts| <= WINDOW_SEC
+  // (600s); a stale ts (e.g. the create-time `escrowDeadline` placeholder,
+  // hours-to-a-day out) makes `deliver` revert with Error::StaleTs. So this is
+  // recomputed FRESH on every return path, stored-complete or derived. ts must
+  // also land strictly after accept_ts (on-chain freshness).
+  const freshTsWindow = async (): Promise<number> => {
+    let ts = Math.floor(Date.now() / 1000);
+    const raw = await readShipmentRaw(id);
+    if (raw.ok) {
+      const acceptTs = asNumber(raw.raw.accept_ts);
+      if (ts <= acceptTs) ts = acceptTs + 1;
+    }
+    return ts;
+  };
+
+  const stored = await store.getClaimContext(String(id));
+  if (stored && isCompleteClaimContext(stored)) {
+    return { ...stored, tsWindow: await freshTsWindow() };
+  }
+
+  const rec = await store.getShip(id);
+  if (!rec) throw new Error(`no shipment #${id} on this server — the claim link is for an unknown shipment`);
+  if (!rec.carrierBJJ) {
+    throw new Error(`shipment #${id} has no carrier yet — there is nothing to sign until a carrier accepts custody`);
+  }
+
+  const { latQ, lonQ } = latLonToQ(rec.meta.toLat, rec.meta.toLon);
+  const cellRd = mortonCell(latQ, lonQ, RD_RES).toString();
+
+  return {
     shipmentId: id,
     carrierPkCommit: rec.carrierBJJ.commit,
-    latQ,
-    lonQ,
-    ts,
-  });
-  store.updateShip(id, { pod });
+    destRegion: { lat: rec.meta.toLat, lon: rec.meta.toLon, cellRd },
+    tsWindow: await freshTsWindow(),
+  };
+}
+
+/**
+ * Store a browser-signed proof-of-delivery against ship:<id>. The recipient
+ * derived their Baby Jubjub key from the fragment seed and signed
+ * m = Poseidon(DOM_PODMSG, id, carrier_pk_commit, cell_rd, ts) IN THE BROWSER;
+ * only the signature (+ ts + the confirmed committed coords) reaches us. We
+ * persist it in the exact Pod shape the A1 delivery witness reads. The coords are
+ * the committed dest coords, so cell_rd recomputed from lat_q/lon_q matches the
+ * signed message.
+ */
+export async function recordPodFlow(req: PodSignReq): Promise<{ signed: boolean }> {
+  const { shipmentId, signature, lat, lon } = req;
+  const rec = await store.getShip(shipmentId);
+  if (!rec) throw new Error(`no stored packet for shipment ${shipmentId}`);
+  if (!rec.carrierBJJ) throw new Error(`shipment ${shipmentId} not accepted yet (no carrier commit)`);
+  const { latQ, lonQ } = latLonToQ(lat, lon);
+  const pod = podRecord(signature as PodEnvelope, latQ, lonQ);
+  await store.updateShip(shipmentId, { pod: pod as Pod });
   return { signed: true };
 }
 
@@ -447,10 +602,10 @@ function jsonSafeInput(w: unknown): unknown {
  * multi-MB zkeys never need to live in a serverless function.
  */
 export async function deliveryInputFlow(id: number): Promise<{ input: unknown }> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted (no carrier key)`);
-  if (!rec.pod) throw new Error(`shipment ${id} has no PoD — sign it first (/api/recipient-pod)`);
+  if (!rec.pod) throw new Error(`shipment ${id} has no PoD — the recipient must sign the claim link first (/claim/${id})`);
 
   const witness = await assembleDeliveryWitness({
     packet: rec.packet,
@@ -471,9 +626,9 @@ export async function recordDeliveryProofFlow(
   proof: unknown,
   publicSignals: string[],
 ): Promise<{ ready: boolean }> {
-  if (!store.getShip(id)) throw new Error(`no stored packet for shipment ${id}`);
+  if (!await store.getShip(id)) throw new Error(`no stored packet for shipment ${id}`);
   if (!proof || !Array.isArray(publicSignals)) throw new Error("proof + publicSignals required");
-  store.updateShip(id, { deliveryProof: { proof: proof as SnarkjsProof, publicSignals } });
+  await store.updateShip(id, { deliveryProof: { proof: proof as SnarkjsProof, publicSignals } });
   return { ready: true };
 }
 
@@ -491,7 +646,7 @@ const lonQtoDeg = (q: number) => (q / Q) * 360 - 180;
  * so it flows to the tx consistently.
  */
 export async function flightInputFlow(id: number): Promise<FlyRes & { input: unknown }> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   if (rec.meta.method !== "drone") throw new Error(`shipment ${id} is not a drone shipment`);
   if (!rec.carrierBJJ) throw new Error(`shipment ${id} not accepted yet (no carrier commit)`);
@@ -546,16 +701,16 @@ export async function recordFlightProofFlow(
   proof: unknown,
   publicSignals: string[],
 ): Promise<{ ok: boolean }> {
-  if (!store.getShip(id)) throw new Error(`no stored packet for shipment ${id}`);
+  if (!await store.getShip(id)) throw new Error(`no stored packet for shipment ${id}`);
   if (!proof || !Array.isArray(publicSignals)) throw new Error("proof + publicSignals required");
-  store.updateShip(id, { flightProof: { proof: proof as SnarkjsProof, publicSignals } });
+  await store.updateShip(id, { flightProof: { proof: proof as SnarkjsProof, publicSignals } });
   return { ok: true };
 }
 
 // ── carrier verify (T12) ─────────────────────────────────────────────────────
 
 export async function verifyFlow(id: number): Promise<VerifyRes> {
-  const rec = store.getShip(id);
+  const rec = await store.getShip(id);
   if (!rec) throw new Error(`no stored packet for shipment ${id}`);
   const raw = await readShipmentRaw(id);
   const onchainCs = raw.ok ? asDecimal(raw.raw.c_s) : "0";
@@ -615,7 +770,7 @@ export async function auditFlow(txHash?: string): Promise<AuditRes> {
  * leaves the server once settle is actually admissible.
  */
 export async function releaseEscrowFlow(shipmentId: number): Promise<ConfSettleRelease> {
-  const rec = store.getShip(shipmentId);
+  const rec = await store.getShip(shipmentId);
   if (!rec) throw new Error(`no stored record for shipment ${shipmentId}`);
   if (!rec.escrow) throw new Error(`shipment ${shipmentId} has no confidential escrow (transparent rail?)`);
   const view = await shipmentView(shipmentId);
@@ -629,6 +784,110 @@ export async function releaseEscrowFlow(shipmentId: number): Promise<ConfSettleR
 
 /** Record the confidential settle tx against the shipment (after the browser submits it). */
 export async function recordSettleFlow(shipmentId: number, settleTx: string): Promise<{ recorded: boolean }> {
-  const updated = store.updateShip(shipmentId, { settleTx });
+  const updated = await store.updateShip(shipmentId, { settleTx });
   return { recorded: updated !== undefined };
+}
+
+// ── thin disputes — report flag on ship:<id> (§8) ────────────────────────────
+
+/** Set a lightweight report flag on the shipment's mailbox record. No on-chain
+ *  effect — deep arbitration is a follow-on spec. Requires an existing record. */
+export async function reportShipFlow(
+  id: number,
+  reason: string,
+): Promise<{ reported: boolean; at: number }> {
+  const rec = await store.getShip(id);
+  if (!rec) throw new Error(`no stored record for shipment ${id}`);
+  const trimmed = (reason ?? "").trim().slice(0, 500);
+  if (!trimmed) throw new Error("a report reason is required");
+  const at = Date.now();
+  await store.updateShip(id, { report: { reason: trimmed, at } });
+  return { reported: true, at };
+}
+
+// ── market board (Task 5) ─────────────────────────────────────────────────────
+
+/**
+ * GET /api/market — the carrier board. Reads the openListings index and hydrates
+ * each row from its listing:<id> summary (only on-chain-public metadata; amount is
+ * null on the confidential rail — spec §9). Newest first. The KV index is a fast
+ * cache over the registry, which stays the source of truth.
+ */
+export async function marketListFlow(): Promise<Listing[]> {
+  const ids = await store.listOpenListings();
+  const rows: Listing[] = [];
+  for (const id of ids) {
+    const l = await store.getListing(id);
+    if (l) rows.push(l);
+  }
+  rows.sort((a, b) => b.createdAt - a.createdAt);
+  return rows;
+}
+
+/**
+ * POST /api/market — credential-gated claim. A credentialed carrier receives the
+ * sealed packet (recipient claim seed stripped) to verify T12 and then accept;
+ * a non-credentialed caller gets a structured onboarding CTA (spec §3/§9/§10).
+ * `address` is the connected wallet (the caller identity).
+ *
+ * store.ts is KV-backed and fully async (Task 2), but the pure claim-gate's
+ * `revealPacket` thunk is synchronous (so its bun:test stays sync — see
+ * claim-gate.test.ts). So the credential check runs first and short-circuits
+ * before ever touching the store for a non-credentialed caller; only once
+ * credentialed do we `await store.getShip` and hand the already-resolved
+ * packet to decideClaim's thunk.
+ */
+export async function marketClaimFlow(
+  shipmentId: number,
+  address: string,
+): Promise<MarketClaimResult> {
+  if (!address) throw new Error("address (connected wallet) required");
+  const carrier = await store.getCarrier(address);
+  if (!carrier.credentialed) {
+    return decideClaim(false, () => undefined);
+  }
+  const rec = await store.getShip(shipmentId);
+  if (!rec) {
+    throw new Error(`no stored packet for shipment ${shipmentId} — create it via this server first`);
+  }
+  return decideClaim(true, () => rec.packet);
+}
+
+// ── carrier onboarding + credential gate (Spec 1 marketplace) ────────────────
+
+/**
+ * Onboard a carrier: mark `address` credentialed so it can claim from /market.
+ * Idempotent — re-onboarding a credentialed carrier preserves its onboardedAt.
+ *
+ * PONYTAIL — demo shortcut, stated honestly. A REAL credential issuance builds
+ * the depth-10 credential tree with this carrier's leaf
+ *   leaf = Poseidon(DOM_CRED, pk_x, pk_y, class, payload_limit_g, expiry_ts)   (DESIGN §6.3)
+ * and publishes the new epoch root via aegis-credentials `set_root(root, epoch)`,
+ * which is gated by `issuer.require_auth()` (DESIGN §10.3). This server holds NO
+ * Stellar signing key — least of all the issuer's — so it CANNOT sign that tx;
+ * spec §13 flags this exact "credential issuance needs an admin/authorized
+ * signer" risk. For the demo we record credentialed=true in the shared store and
+ * leave the on-chain root untouched. `accept` still succeeds because plan-001
+ * `accept` takes the A3 credential proof as OPTIONAL (DESIGN §8.2: "Without A3,
+ * accept is an authorized plain call"). Real issuance is roadmap: an
+ * issuer-key-holding service publishes the root out-of-band.
+ */
+export async function onboardCarrierFlow(address: string): Promise<CarrierStatus> {
+  if (!isValidStellarAddress(address)) throw new Error("invalid Stellar address");
+  const existing = await store.getCarrier(address);
+  if (existing.credentialed) return existing; // idempotent — keep original onboardedAt
+  await store.setCarrierCredentialed(address, Math.floor(Date.now() / 1000));
+  return await store.getCarrier(address);
+}
+
+/** Carrier status for GET /api/carrier/<address>: credential flag + reputation. */
+export async function carrierStatusFlow(
+  address: string,
+): Promise<{ credentialed: boolean; onboardedAt?: number; reputation: Reputation }> {
+  if (!isValidStellarAddress(address)) throw new Error("invalid Stellar address");
+  const [status, reputation] = await Promise.all([
+    store.getCarrier(address),
+    store.getRep(address),
+  ]);
+  return { credentialed: status.credentialed, onboardedAt: status.onboardedAt, reputation };
 }

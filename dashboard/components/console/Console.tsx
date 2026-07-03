@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import { useWallet } from "@/lib/wallet-context";
 import { useSession } from "@/lib/session-context";
+import { parseClaimedId } from "@/lib/console/deep-link";
 import { api } from "@/lib/api";
 import LoginScreen from "./LoginScreen";
 import TopBar from "./TopBar";
@@ -23,8 +24,10 @@ import { Spinner } from "./primitives";
 
 export default function Console() {
   const { ready, stellarAddress } = useWallet();
-  const { role, hasChosenRole, chooseRole, syncChosen, setActiveCount, shipment, toggleLens } =
-    useSession();
+  const {
+    role, hasChosenRole, chooseRole, syncChosen, setActiveCount, shipment,
+    toggleLens, setCurrentShipmentId, setRole,
+  } = useSession();
 
   // Ledger Lens — key `L` re-renders the console as the chain sees it. Ignored
   // while typing in a field so it never fights text entry.
@@ -39,6 +42,22 @@ export default function Console() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleLens]);
+
+  // Deep-link back from the market: `/console?claimed=<id>` (Task 11) focuses the
+  // just-claimed shipment and switches to the Carrier station so Accept is
+  // unlocked. One-shot on mount; the param is stripped so a refresh won't re-fire.
+  // Both this write and SessionProvider's localStorage-restore write SHIPMENT_KEY,
+  // so the focused id converges to <id> regardless of effect order.
+  useEffect(() => {
+    const id = parseClaimedId(window.location.search);
+    if (id === null) return;
+    setRole("carrier");
+    setCurrentShipmentId(id);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("claimed");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [setRole, setCurrentShipmentId]);
+
   // Which address we have finished reading role info for — gates the modal so it
   // never flashes for a wallet that already has a (client- or chain-) role.
   const [checkedFor, setCheckedFor] = useState<string | null>(null);

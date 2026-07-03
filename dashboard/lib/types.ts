@@ -48,6 +48,7 @@ export interface SubmitTxRes {
   tx: string;                         // explorer tx hash / id
   shipmentId?: number;                // assigned on create
   view?: ShipmentView;
+  claimLink?: string;                 // create only: /claim/<id>#<seedHex> for the recipient
 }
 
 /** What the chain sees vs. what stays hidden — drives the money-shot panel. */
@@ -147,8 +148,6 @@ export interface ProveInputRes { input: unknown; }
 /** Phase-1 fly response — the map waypoints + the A2 circuit input. */
 export type FlyInputRes = FlyRes & { input: unknown };
 
-export interface SignPodReq extends ShipmentReq { lat: number; lon: number; }
-
 /** POST /api/confidential/settle — release E's packet, or record a settle tx. */
 export interface ConfSettleReq { shipmentId: number; settleTx?: string; }
 
@@ -171,3 +170,72 @@ export interface AuditRes {
   /** Sender + recipient auditor ciphertexts decrypt to the same amount. */
   channelsAgree?: boolean;
 }
+
+// ── Marketplace (Spec 1): store-domain records ───────────────────────────────
+
+/** A shipment surfaced on the carrier marketplace. `amount` is null on the
+ *  confidential rail (hidden on-chain). Mirrors the on-chain view + mailbox meta. */
+export interface Listing {
+  shipmentId: number;
+  amount: string | null;
+  method: Method;
+  laneId: number | null;
+  escrowDeadline: number;
+  state: ShipmentState;
+  createdAt: number;
+  payout?: string;
+}
+
+/** Minimal PoD-signing context handed to a claim recipient. NOT the seed — the
+ *  seed lives only in the /claim/<id>#<seedHex> URL fragment, never server-side. */
+export interface ClaimContext {
+  shipmentId: number;
+  carrierPkCommit: string;
+  destRegion: unknown;
+  tsWindow: number;
+}
+
+/** Whether a carrier address has been credentialed (one-shot onboarding). */
+export interface CarrierStatus {
+  credentialed: boolean;
+  onboardedAt?: number;
+}
+
+/** Per-address carrier reputation counters. */
+export interface Reputation {
+  delivered: number;
+  expired: number;
+}
+
+/** GET /api/carrier/<address> — credential status + reputation (Task 8). */
+export interface CarrierStatusRes extends CarrierStatus {
+  reputation: Reputation;
+}
+
+/** POST /api/market — credential-gated packet claim. */
+export interface MarketClaimReq { shipmentId: number; }
+export interface MarketClaimRes { packet: unknown; }
+
+/** POST /api/claim — recipient stores the in-browser PoD signature. */
+export interface PodSignReq {
+  shipmentId: number;
+  signature: unknown;
+  lat: number;
+  lon: number;
+}
+
+/**
+ * POST /api/market claim result. Credentialed carriers get the sealed packet
+ * (recipient claim seed already stripped, Task 5); non-credentialed callers get
+ * a structured onboarding CTA — never a bare error (spec §10). The `packet`
+ * arm is exactly MarketClaimRes plus a `credentialed` discriminator.
+ */
+export type MarketClaimResult =
+  | ({ credentialed: true } & MarketClaimRes)
+  | { credentialed: false; onboard: { title: string; cta: string; href: string } };
+
+// ── Thin disputes (Task 10): refund-on-expiry action + report flag ─────────
+
+/** POST /api/dispute/report — file a thin-dispute flag on ship:<id> (§8). */
+export interface ReportReq { shipmentId: number; reason: string; }
+export interface ReportRes { reported: boolean; at: number; }

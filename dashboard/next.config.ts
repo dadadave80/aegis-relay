@@ -51,11 +51,17 @@ const nextConfig: NextConfig = {
   // client we alias the bare specifier to false — the SDK's Node-only default
   // loader is the only static reference, and bb-loader overrides it before
   // proving. (Ported verbatim from ct-demo/packages/app/next.config.mjs.)
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, webpack }) => {
     config.experiments = { ...config.experiments, asyncWebAssembly: true, topLevelAwait: true };
     config.resolve.fallback = { ...config.resolve.fallback, fs: false, path: false, crypto: false };
     if (!isServer) {
       config.resolve.alias = { ...config.resolve.alias, "@aztec/bb.js": false };
+      // circomlibjs's eddsa/poseidon internals (lib/pod/sign-browser.ts, used by
+      // the /claim recipient page) reference the global `Buffer`, which the
+      // browser doesn't have. Next 12+ dropped the automatic Node polyfills, so
+      // provide it explicitly for the client bundle (the `buffer` package is
+      // already resolvable — a transitive dep of the existing crypto tooling).
+      config.plugins.push(new webpack.ProvidePlugin({ Buffer: ["buffer", "Buffer"] }));
     }
     return config;
   },
