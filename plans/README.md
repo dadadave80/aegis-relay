@@ -15,7 +15,8 @@ run the drift check first, and update your row when done.
 |------|-------|----------|--------|------------|--------|
 | 001 | Enforce one role per wallet on-chain (registry role binding) | P1 | M | — | DONE (branch `advisor/001-onchain-role-binding`, commit `5d2f840`; unmerged — awaiting redeploy) |
 | 002 | Make it the real app — remove "demo" framing + the attacker role | P1 | M | — | DONE (branch `advisor/002-real-app-remove-demo-and-attacker`, commit `c5f0df4`; unmerged) |
-| 003 | First-connect role modal + on-chain-gated role switching | P2 | M | 001 (deployed ✓), 002 (merged ✓) | DONE (branch `advisor/003-role-selection-modal`, commit `1861ec6`; unmerged) |
+| 003 | First-connect role modal + on-chain-gated role switching | P2 | M | 001 (deployed ✓), 002 (merged ✓) | DONE (merged; commit `1861ec6`) |
+| 004 | Wire the confidential-escrow rail into the app | P3 | L | 001–003 (all done) | TODO — big; HIGH risk; has a prerequisite CT-token redeploy |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
 
