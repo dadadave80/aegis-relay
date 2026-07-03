@@ -22,11 +22,11 @@ const nextConfig: NextConfig = {
   // for the identical @ctd/sdk + bb.js stack, so we mirror it. `turbopack.root`
   // is kept for any non-SDK Turbopack use (e.g. the /map circuits import).
   turbopack: {
-    root: path.join(__dirname, "..", ".."),
+    root: path.join(__dirname, ".."),
   },
   // /map imports fixtures from ../circuits and @ctd/sdk is a `file:` link into
-  // ../../ct-demo — both outside dashboard/. webpack needs externalDir to follow
-  // imports outside the project root.
+  // ../vendor/ctd-sdk — both outside dashboard/. webpack needs externalDir to
+  // follow imports outside the project root.
   experimental: { externalDir: true },
   // @ctd/sdk ships untranspiled TS/ESM; Next must transpile it in the app graph.
   transpilePackages: ["@ctd/sdk"],
@@ -50,6 +50,12 @@ const nextConfig: NextConfig = {
   webpack: (config, { isServer }) => {
     config.experiments = { ...config.experiments, asyncWebAssembly: true, topLevelAwait: true };
     config.resolve.fallback = { ...config.resolve.fallback, fs: false, path: false, crypto: false };
+    // @ctd/sdk is a vendored `file:` package symlinked into node_modules. Resolve
+    // it through the symlink (not its realpath under vendor/ctd-sdk, which has no
+    // adjacent node_modules) so its runtime deps — the package manager nested them
+    // under node_modules/@ctd/sdk — are found. Without this, webpack resolves from
+    // the realpath and can't find @stellar/stellar-sdk, @noble/*, etc.
+    config.resolve.symlinks = false;
     if (!isServer) {
       config.resolve.alias = { ...config.resolve.alias, "@aztec/bb.js": false };
     }
