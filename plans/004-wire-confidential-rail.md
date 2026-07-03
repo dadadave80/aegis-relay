@@ -397,20 +397,44 @@ behavior is already covered by `contracts/aegis-registry` tests + the
 
 ## Done criteria
 
-- [ ] Phase 0: `registry.ct_token()` on `CAROLAUW…` returns the newly-deployed
+- [x] Phase 0: `registry.ct_token()` on `CAROLAUW…` returns the newly-deployed
       token; new CT ids wired into `artifacts.ts`/`config.ts`/`docs/testnet.md`.
-- [ ] `dashboard/package.json` depends on `@ctd/sdk`; `bun install` succeeds.
-- [ ] `dashboard/lib/server/flows.ts` no longer contains the confidential `throw`;
-      `grep -n "not wired into the wallet flow" dashboard/lib/server/flows.ts` → none.
-- [ ] `auditFlow` calls the real decrypt (no hardcoded "500000000"/"2d990d64" as the
-      primary return path).
-- [ ] `bun run lint` + `bun run build` exit 0.
-- [ ] A live confidential lifecycle on testnet: create (amount hidden, `status`
-      shows amount 0 + rail confidential) → accept → deliver → settle (payout
-      confidential balance up) → auditor decrypt returns the real amount.
-- [ ] No secret committed (`git diff … | grep -cE 'S[A-Z2-7]{55}'` == 0); funder/E/
-      auditor secrets only under gitignored `.demo-state/**` or `prover/out/**`.
-- [ ] Only in-scope files modified.
+      (+ `CT_VERIFIER_ID`/`CT_DEPLOYED_LEDGER` added in Phase C.)
+- [x] `dashboard/package.json` depends on `@ctd/sdk`; `bun install` succeeds
+      (SDK's `@stellar/stellar-sdk@14` nests; dashboard keeps 16 top-level).
+- [x] `dashboard/lib/server/flows.ts` no longer contains the confidential `throw`;
+      `grep -n "not wired into the wallet flow" …` → none.
+- [x] `auditFlow` calls the real decrypt (no hardcoded "500000000"/"2d990d64");
+      live decrypt path runtime-verified (honest fallback on the fresh token).
+- [x] `bun run lint` + `bun run build` exit 0 (build with `--webpack`).
+- [ ] A live confidential lifecycle on testnet — **PENDING Phase D + a funded
+      Freighter wallet.** Client module (`ConfidentialMerchant`/`settleEscrow`)
+      is built + build-verified; the browser orchestration in `RolePanels.tsx`
+      (merchant fundEscrow→create; carrier register+settle) is the remaining
+      interactive wiring.
+- [x] No secret committed (`git diff --cached | grep -cE 'S[A-Z2-7]{55}'` == 0).
+- [x] Only in-scope files modified (client module `lib/confidential/*`;
+      `lib/server/confidential-audit.ts` stands in for the planned server
+      `confidential.ts`; types/store/flows/artifacts/next.config as scoped).
+
+### Remaining (Phase D — interactive)
+- Merchant panel (`RolePanels.tsx`): on rail=confidential, gate to Freighter
+  (disable + note otherwise), then on create run `ConfidentialMerchant.connect →
+  fundEscrow(amount)` (browser proofs + Freighter popups), pass E's address +
+  record into `flows.create({…, escrow, escrowRecord})`. Show a "provisioning
+  confidential escrow…" state.
+- Carrier panel: after Delivered on a confidential shipment, a **Settle** button
+  that registers the carrier on the CT token (browser proof, wallet-signed) then
+  `settleEscrow(record, carrierAddr)`. Needs a mailbox endpoint to hand the
+  browser E's record for a Delivered shipment (E's secret is a hook-caged
+  capability — document the round-trip; it contradicts store.ts's "secrets never
+  returned" note, so gate it on Delivered).
+- Auditor panel already hits the real `/api/confidential/audit`.
+- Docs: README/dashboard README honest caveat (client-side wallet-derived key;
+  E's key server-mailboxed + round-tripped to settle); `docs/DEMO-ARCHITECTURE.md`
+  confidential section → "wired".
+- Force `milestones [10000]` on the confidential create form (registry can't do
+  bps math on a hidden amount).
 
 ## STOP conditions
 
