@@ -13,8 +13,8 @@ import { StatusRail, type RailStation } from "@/components/ds/StatusRail";
 import { VisibilityMatrix } from "@/components/ds/VisibilityMatrix";
 import { Stamp } from "@/components/ds/Stamp";
 import { Spinner } from "@/components/ds/Button";
+import { CorridorInstrument } from "@/components/ds/CorridorInstrument";
 import { TextInput } from "./primitives";
-import CorridorMini from "./CorridorMini";
 import type { ShipmentState, ShipmentView } from "@/lib/types";
 
 const STATE_STAMP: Record<ShipmentState, { label: string; tone: "caution" | "ink" | "verified" | "danger" | "dim" }> = {
@@ -148,7 +148,7 @@ export default function LifecycleBoard() {
 
           <VisibilityMatrix confidential={shipment.rail === "confidential"} drone={shipment.method === "drone"} hideYou={lens} />
 
-          {shipment.method === "drone" && <CorridorMini fly={flyResult} />}
+          {shipment.method === "drone" && <CorridorInstrument live={!!flyResult} lens={lens} />}
         </>
       ) : (
         <div className="panel" style={{ padding: 40, textAlign: "center" }}>
