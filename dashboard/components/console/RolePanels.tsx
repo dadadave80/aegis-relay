@@ -13,6 +13,8 @@
  */
 
 import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { claimUrl } from "@/lib/console/deep-link";
 import { api } from "@/lib/api";
 import type {
   AuditRes,
@@ -148,6 +150,65 @@ function Result({ tone = "verified", children }: { tone?: "verified" | "caution"
   );
 }
 
+/** Post-create Merchant surface: listing status + the copyable recipient claim
+ *  link. The seed lives only in the URL fragment (`#…`) — never on the server. */
+function ClaimLinkCard({ shipmentId, claimLink }: { shipmentId: number; claimLink: string | null }) {
+  const [copied, setCopied] = useState(false);
+  const url =
+    claimLink !== null && typeof window !== "undefined"
+      ? claimUrl(window.location.origin, claimLink)
+      : claimLink;
+  const copy = () => {
+    if (url && typeof navigator !== "undefined" && navigator.clipboard) {
+      void navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    }
+  };
+  return (
+    <Result>
+      <div className="flex flex-wrap items-center gap-2" style={{ marginBottom: 10 }}>
+        <span className="stamp" style={{ color: "var(--verified)" }}>Listed · OPEN</span>
+        <span className="text-xs" style={{ color: "var(--ink-dim)" }}>
+          Shipment <span className="mono">#{shipmentId}</span> is live on the{" "}
+          <Link href="/market" className="hover:underline" style={{ color: "var(--seal)" }}>carrier market</Link>{" "}
+          — a credentialed carrier can claim it now.
+        </span>
+      </div>
+
+      {url ? (
+        <>
+          <div className="stamp" style={{ color: "var(--chain-dim)" }}>Recipient claim link</div>
+          <p className="text-xs" style={{ margin: "4px 0 10px", color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
+            Send this to the recipient. The signing seed rides in the URL fragment (after the{" "}
+            <span className="mono">#</span>) and never reaches the server.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              readOnly
+              value={url}
+              onFocus={(e) => e.currentTarget.select()}
+              aria-label="Recipient claim link"
+              className="mono w-full min-w-0 rounded-[var(--r-control)] px-3 py-2.5 text-xs outline-none border hairline"
+              style={{ background: "var(--void-0)", color: "var(--ink)" }}
+            />
+            <button
+              onClick={copy}
+              style={{ minHeight: 40, padding: "0 14px", borderRadius: "var(--r-control)", border: "1px solid var(--hairline)", background: "var(--void-1)", color: copied ? "var(--verified)" : "var(--ink-dim)", fontSize: "var(--text-sm)", cursor: "pointer", whiteSpace: "nowrap" }}
+            >
+              {copied ? "Copied ✓" : "Copy"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="text-xs" style={{ margin: 0, color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
+          Recipient claim link unavailable for this shipment.
+        </p>
+      )}
+    </Result>
+  );
+}
+
 // ── Merchant ─────────────────────────────────────────────────────────────────
 
 function MerchantPanel() {
@@ -172,11 +233,13 @@ function MerchantPanel() {
   const [method, setMethod] = useState<Method>("drone");
   const [rail, setRail] = useState<Rail>("transparent");
   const [deadline, setDeadline] = useState("24");
+  const [created, setCreated] = useState<{ shipmentId: number; claimLink: string | null } | null>(null);
 
   const walletReady = !!stellarAddress;
 
   const create = () =>
     run("create", async () => {
+      setCreated(null);
       const amt = Number(amount);
       if (!Number.isFinite(amt) || amt <= 0) {
         setError({ title: "Invalid amount", detail: "Enter a positive XLM amount." });
@@ -198,6 +261,10 @@ function MerchantPanel() {
         const { shipmentId, view } = res.data;
         setCurrentShipmentId(shipmentId);
         setCreatedDest(shipmentId, { lat: Number(toLat), lon: Number(toLon) });
+        setCreated({
+          shipmentId,
+          claimLink: (res.data as { claimLink?: string }).claimLink ?? null,
+        });
         if (view) applyView(view);
         toast({
           title: `Shipment #${shipmentId} created`,
@@ -291,6 +358,8 @@ function MerchantPanel() {
       >
         Create shipment
       </ActionButton>
+
+      {created && <ClaimLinkCard shipmentId={created.shipmentId} claimLink={created.claimLink} />}
 
       {method === "drone" && (
         <Honesty>
@@ -431,6 +500,31 @@ function MerchantDisputes({ shipmentId, view }: { shipmentId: number; view: Ship
   );
 }
 
+/** Carrier no-shipment state: carriers discover jobs on the market, not via a
+ *  raw id box. Deep-links to /market; a claim there returns with ?claimed=<id>. */
+function ClaimFromMarket() {
+  return (
+    <div
+      className="text-sm space-y-4"
+      style={{ background: "var(--void-0)", border: "1px solid var(--hairline)", borderRadius: "var(--r-control)", padding: 16, color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}
+    >
+      <p style={{ margin: 0 }}>
+        Carriers don&apos;t get handed a shipment id — you{" "}
+        <span style={{ color: "var(--ink)" }}>discover</span> open jobs on the market and
+        claim one. Claiming focuses it here with <span className="mono">Accept</span> unlocked
+        (first valid accept wins on-chain).
+      </p>
+      <Link
+        href="/market"
+        className="inline-flex items-center justify-center gap-2 rounded-[var(--r-control)] px-[18px] py-2.5 text-sm font-semibold min-h-[44px] transition-transform active:scale-[0.98]"
+        style={{ background: "var(--seal)", color: "#0B0716" }}
+      >
+        Claim from market →
+      </Link>
+    </div>
+  );
+}
+
 // ── Carrier ──────────────────────────────────────────────────────────────────
 
 function CarrierStep({
@@ -514,9 +608,9 @@ function CarrierPanel() {
       <Panel
         title="Carrier — take custody & prove compliance"
       temp="neutral"
-        subtitle="Verify the sealed packet against the on-chain commitment, accept custody, prove the flight, then prove delivery."
+        subtitle="Discover an open shipment on the market and claim it — then verify the sealed packet, accept custody, prove the flight, and prove delivery."
       >
-        <NeedShipment />
+        <ClaimFromMarket />
       </Panel>
     );
   }
