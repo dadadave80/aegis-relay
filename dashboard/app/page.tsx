@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Hash from "@/components/Hash";
 import TrackLookup from "@/components/TrackLookup";
+import ManifestHero from "@/components/ManifestHero";
 import { AIRSPACE_ID, CREDENTIALS_ID, REGISTRY_ID, explorer, getLatestLedger } from "@/lib/contract";
 
 export const dynamic = "force-dynamic";
@@ -30,120 +31,117 @@ export default async function Home() {
   const ledger = await getLatestLedger().catch(() => null);
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-14">
-      {/* Hero */}
-      <div className="text-center mb-12">
-        <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
+    <div className="mx-auto" style={{ maxWidth: 1080, padding: "72px 24px 96px" }}>
+      {/* Hero thesis */}
+      <div style={{ textAlign: "center", marginBottom: 48 }}>
+        <h1 className="display" style={{ margin: 0, fontSize: "var(--mk-2xl)", fontWeight: 700 }}>
           Prove the delivery.
           <br />
-          <span style={{ color: "var(--mint)" }}>Hide the map.</span>
+          <span style={{ color: "var(--seal)" }}>Hide the map.</span>
         </h1>
-        <p className="mt-5 max-w-2xl mx-auto text-sm sm:text-base leading-relaxed" style={{ color: "var(--text-dim)" }}>
-          Freight runs on data nobody wants to share — manifests, values, recipients, addresses, routes.
-          Every disclosure is an attack surface. Aegis Relay settles deliveries on Stellar while keeping
-          all of it private: on-chain there is only an opaque commitment, an escrow, a state machine,
-          and Groth16 proofs. Each verified proof advances the shipment and releases escrow in the
-          <em> same</em> Soroban transaction, on the native BN254 + Poseidon host functions — no oracle,
-          no off-chain settlement layer.
+        <p
+          style={{
+            margin: "20px auto 0",
+            maxWidth: "60ch",
+            fontSize: "var(--mk-sm)",
+            color: "var(--ink-dim)",
+            lineHeight: "var(--lh-body)",
+          }}
+        >
+          Freight runs on data nobody wants to share — manifests, values, recipients, addresses,
+          routes. Aegis Relay settles deliveries on Stellar while keeping all of it private: on-chain
+          there is only an opaque commitment, an escrow, a state machine, and Groth16 proofs. Each
+          verified proof advances the shipment and releases escrow in the <em>same</em> Soroban
+          transaction, on the native BN254 + Poseidon host functions — no oracle, no off-chain
+          settlement layer.
         </p>
       </div>
 
+      {/* The self-redacting manifest */}
+      <ManifestHero />
+
       {/* Primary CTA — the app */}
-      <div className="max-w-2xl mx-auto mb-12">
+      <div style={{ maxWidth: 720, margin: "48px auto 0" }}>
         <Link
           href="/console"
-          className="group card block p-6 sm:p-7 transition-[transform,border-color] hover:-translate-y-0.5"
-          style={{ borderColor: "color-mix(in srgb, var(--mint) 40%, transparent)" }}
+          className="group panel-warm block transition-[transform,border-color] hover:-translate-y-0.5"
+          style={{ padding: 24 }}
         >
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="min-w-0">
-              <p
-                className="text-xs uppercase tracking-wider mb-1.5 inline-flex items-center gap-2"
-                style={{ color: "var(--mint)" }}
-              >
-                <span
-                  className="inline-block w-1.5 h-1.5 rounded-full"
-                  style={{ background: "var(--mint)" }}
-                  aria-hidden
-                />
-                The app
-              </p>
-              <p className="text-lg sm:text-xl font-semibold tracking-tight">
+              <span className="stamp" style={{ color: "var(--seal)" }}>The app</span>
+              <p className="display" style={{ margin: "8px 0 0", fontSize: "var(--text-lg)", fontWeight: 600 }}>
                 Drive the whole lifecycle yourself
               </p>
-              <p className="text-sm mt-1 leading-relaxed" style={{ color: "var(--text-dim)" }}>
-                Connect your wallet, act as merchant, carrier, recipient or
-                auditor, and watch every proof settle live on testnet.
+              <p style={{ margin: "6px 0 0", fontSize: "var(--text-sm)", color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
+                Connect your wallet, act as merchant, carrier, recipient or auditor, and watch every
+                proof settle live on testnet.
               </p>
             </div>
             <span
-              className="shrink-0 inline-flex items-center gap-2 rounded-lg px-5 py-3 text-sm font-semibold transition-transform group-hover:translate-x-0.5"
-              style={{ background: "var(--mint)", color: "var(--on-mint)" }}
+              className="shrink-0 inline-flex items-center gap-2 transition-transform group-hover:translate-x-0.5"
+              style={{ background: "var(--seal)", color: "var(--on-mint)", padding: "12px 20px", borderRadius: "var(--r-control)", fontWeight: 600, fontSize: "var(--text-sm)" }}
             >
-              Open the app →
+              Open the app ↗
             </span>
           </div>
         </Link>
       </div>
 
-      {/* Shipment lookup */}
-      <div className="max-w-md mx-auto mb-14">
-        <TrackLookup />
-        <p className="text-xs text-center mt-2" style={{ color: "var(--text-faint)" }}>
-          Look up a live shipment on the testnet registry
-        </p>
-      </div>
-
       {/* Three proof statements */}
-      <div className="grid sm:grid-cols-3 gap-4 mb-12">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          gap: 16,
+          margin: "64px 0",
+        }}
+      >
         {PROOFS.map((p) => (
-          <div key={p.name} className="card p-5">
-            <p className="text-xs uppercase tracking-wider mb-2" style={{ color: "var(--mint)" }}>
-              {p.name}
+          <div key={p.name} className="panel" style={{ padding: 18 }}>
+            <span className="stamp" style={{ color: "var(--seal)" }}>{p.name}</span>
+            <p style={{ margin: "10px 0 0", fontSize: "var(--text-sm)", color: "var(--ink)", lineHeight: "var(--lh-body)" }}>
+              {p.claim}
             </p>
-            <p className="text-sm leading-relaxed">{p.claim}</p>
-            <p className="text-xs mt-3 leading-relaxed" style={{ color: "var(--text-faint)" }}>{p.hides}</p>
+            <p style={{ margin: "10px 0 0", fontSize: "var(--text-xs)", color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
+              {p.hides}
+            </p>
           </div>
         ))}
       </div>
 
-      <p className="text-center text-sm mb-12 max-w-2xl mx-auto" style={{ color: "var(--text-dim)" }}>
-        Without ZK, each statement requires revealing the secret it protects. ZK is the mechanism,
-        not a garnish — see the{" "}
-        <Link href="/map" className="hover:underline" style={{ color: "var(--mint)" }}>
-          corridor demo
-        </Link>{" "}
-        for the drone story and{" "}
-        <Link href="/verify" className="hover:underline" style={{ color: "var(--mint)" }}>
-          verify
-        </Link>{" "}
-        for the recipient flow.
+      {/* Shipment lookup */}
+      <div style={{ maxWidth: 420, margin: "0 auto 16px" }}>
+        <TrackLookup />
+      </div>
+      <p className="mono" style={{ textAlign: "center", margin: "0 0 64px", fontSize: "var(--text-xs)", color: "var(--ink-dim)" }}>
+        look up a live shipment on the testnet registry
       </p>
 
       {/* Live network strip */}
-      <div className="card p-5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-        <div className="flex items-center gap-3">
+      <div
+        className="panel-cold"
+        style={{ padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}
+      >
+        <span className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: "var(--text-xs)", color: ledger !== null ? "var(--chain)" : "var(--danger)" }}>
           <span
-            className="inline-block w-2.5 h-2.5 rounded-full"
-            style={{ background: ledger !== null ? "var(--mint)" : "var(--red)" }}
             aria-hidden
+            style={{ width: 7, height: 7, borderRadius: "50%", background: ledger !== null ? "var(--verified)" : "var(--danger)", display: "inline-block" }}
           />
-          <span className="text-sm">
-            {ledger !== null ? (
-              <>Stellar Testnet · ledger <span className="mono">{ledger.toLocaleString("en-US")}</span></>
-            ) : (
-              <span style={{ color: "var(--red)" }}>Testnet RPC unreachable — reads degrade gracefully</span>
-            )}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs" style={{ color: "var(--text-faint)" }}>
-          <span className="inline-flex items-center gap-2">
+          {ledger !== null ? (
+            <>Stellar Testnet · ledger {ledger.toLocaleString("en-US")}</>
+          ) : (
+            <>Testnet RPC unreachable — reads degrade gracefully</>
+          )}
+        </span>
+        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }} className="text-xs">
+          <span className="inline-flex items-center gap-2 mono" style={{ color: "var(--chain-dim)" }}>
             registry <Hash value={REGISTRY_ID} href={explorer(REGISTRY_ID)} />
           </span>
-          <span className="inline-flex items-center gap-2">
+          <span className="inline-flex items-center gap-2 mono" style={{ color: "var(--chain-dim)" }}>
             airspace <Hash value={AIRSPACE_ID} href={explorer(AIRSPACE_ID)} />
           </span>
-          <span className="inline-flex items-center gap-2">
+          <span className="inline-flex items-center gap-2 mono" style={{ color: "var(--chain-dim)" }}>
             credentials <Hash value={CREDENTIALS_ID} href={explorer(CREDENTIALS_ID)} />
           </span>
         </div>

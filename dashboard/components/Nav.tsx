@@ -11,20 +11,25 @@ const cta = { href: "/console", label: "Open the app" };
 export default function Nav() {
   return (
     <header className="border-b hairline">
-      <nav className="max-w-5xl mx-auto flex items-center gap-6 px-6 h-14">
-        <Link href="/" className="font-semibold tracking-tight flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full" style={{ background: "var(--mint)" }} />
-          AEGIS RELAY
+      <nav className="max-w-6xl mx-auto flex items-center gap-6 px-6 h-14">
+        <Link href="/" className="display flex items-center" style={{ fontSize: "var(--text-md)", fontWeight: 700 }}>
+          AEGIS<span style={{ color: "var(--seal)" }}>&nbsp;RELAY</span>
         </Link>
-        <div className="flex gap-5 text-sm" style={{ color: "var(--text-dim)" }}>
+        <div className="flex gap-5" style={{ fontSize: "var(--text-sm)", color: "var(--ink-dim)" }}>
           {links.map((l) => (
-            <Link key={l.href} href={l.href} className="hover:text-white transition-colors">{l.label}</Link>
+            <Link
+              key={l.href}
+              href={l.href}
+              className="transition-colors hover:[color:var(--ink)]"
+            >
+              {l.label}
+            </Link>
           ))}
         </div>
         <Link
           href={cta.href}
-          className="ml-auto text-sm font-semibold rounded-lg px-3.5 py-1.5 transition-opacity hover:opacity-90"
-          style={{ background: "var(--mint)", color: "var(--on-mint)" }}
+          className="ml-auto transition-transform active:scale-[.98]"
+          style={{ background: "var(--seal)", color: "var(--on-mint)", fontWeight: 600, fontSize: "var(--text-sm)", borderRadius: "var(--r-control)", padding: "6px 14px" }}
         >
           {cta.label}
         </Link>
