@@ -12,6 +12,7 @@ Privacy-preserving supply-chain custody & delivery settlement on Stellar. Groth1
 - `contracts-ct/` — SEPARATE workspace for the OpenZeppelin confidential-token fork (R3). Build with `stellar contract build` ONLY — plain cargo fails on `experimental_spec_shaking_v2`. Never merge with `contracts/`.
 - `circuits/` — circom 2.2.3. `lib/` gadgets + `delivery.circom`, `flight.circom`. Build via `circuits/build.mjs`.
 - `prover/` — TypeScript CLIs (merchant/carrier/dronesim/authority) + `src/lib/` shared encoders.
+- `vendor/ctd-sdk/` — vendored `@ctd/sdk` (prebuilt dist + circuits) from `brozorec/stellar-confidential-token-demo`, MIT; see `vendor/ctd-sdk/VENDORED.md`. The JS side is a **bun workspace** (root `package.json` + `bunfig.toml linker="hoisted"`; members `vendor/ctd-sdk`, `dashboard`, `prover`); `@ctd/sdk` is referenced as `workspace:*`. `circuits/` is NOT a member.
 
 ## Hard rules (PIVOT §8 — violate none)
 
@@ -37,6 +38,6 @@ Privacy-preserving supply-chain custody & delivery settlement on Stellar. Groth1
 
 - Contracts: `cargo test --workspace` / `cargo build --workspace --target wasm32v1-none --release`
 - Circuits: `node circuits/build.mjs` (compile + ceremony + zkey; artifacts gitignored)
-- Prover: `cd prover && npm install` — CLIs run with `node`.
+- JS deps: `bun install` at the repo root (bun workspace — installs dashboard + prover + vendored `@ctd/sdk` in one hoisted tree). CLIs run with `node` (snarkjs Groth16 path — `node`, not bun) or `bun` (the confidential rail, which uses `@ctd/sdk`; both resolve it via the workspace).
 
 Provenance: bootstrapped from the v1 donor repo `dadadave80/aegis-zk-proof-of-reserves` (read-only; never modify it).

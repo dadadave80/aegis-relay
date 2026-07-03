@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^2.5.0",
-    "@ctd/sdk": "file:../vendor/ctd-sdk",
+    "@ctd/sdk": "workspace:*",
     "@stellar/stellar-sdk": "^16.0.1",
     "circomlibjs": "^0.1.7",
     "next": "^16.2.10",

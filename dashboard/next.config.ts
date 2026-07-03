@@ -50,12 +50,6 @@ const nextConfig: NextConfig = {
   webpack: (config, { isServer }) => {
     config.experiments = { ...config.experiments, asyncWebAssembly: true, topLevelAwait: true };
     config.resolve.fallback = { ...config.resolve.fallback, fs: false, path: false, crypto: false };
-    // @ctd/sdk is a vendored `file:` package symlinked into node_modules. Resolve
-    // it through the symlink (not its realpath under vendor/ctd-sdk, which has no
-    // adjacent node_modules) so its runtime deps — the package manager nested them
-    // under node_modules/@ctd/sdk — are found. Without this, webpack resolves from
-    // the realpath and can't find @stellar/stellar-sdk, @noble/*, etc.
-    config.resolve.symlinks = false;
     if (!isServer) {
       config.resolve.alias = { ...config.resolve.alias, "@aztec/bb.js": false };
     }

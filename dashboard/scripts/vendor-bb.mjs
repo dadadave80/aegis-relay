@@ -24,7 +24,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, ".."); // dashboard/
 
 function findBrowserDir() {
+  const workspaceRoot = resolve(appRoot, ".."); // bun workspace root (aegis-relay/)
   const candidates = [
+    // Hoisted to the workspace root (bun workspace layout — the common case).
+    join(workspaceRoot, "node_modules", "@aztec", "bb.js", "dest", "browser"),
+    // Fallbacks: dashboard-local install, or nested under @ctd/sdk.
     join(appRoot, "node_modules", "@aztec", "bb.js", "dest", "browser"),
     join(appRoot, "node_modules", "@ctd", "sdk", "node_modules", "@aztec", "bb.js", "dest", "browser"),
   ];

@@ -1,0 +1,12 @@
+{
+  "name": "aegis-relay",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Aegis Relay — privacy-preserving supply-chain custody & delivery settlement on Stellar. Bun workspace: the dashboard app, the prover CLIs, and the vendored @ctd/sdk (see vendor/ctd-sdk/VENDORED.md).",
+  "packageManager": "bun@1.3.14",
+  "workspaces": [
+    "vendor/ctd-sdk",
+    "dashboard",
+    "prover"
+  ]
+}

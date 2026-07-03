@@ -24,11 +24,20 @@ TypeScript sources or tests:
 
 ## Consumers
 
-Referenced as a local `file:` dependency, so `bun install` / `npm install`
-resolve the SDK's own dependencies from the trees below:
+This repo is a **bun workspace** (root `package.json` `workspaces` +
+`bunfig.toml` `linker = "hoisted"`), so this package is a workspace member and
+the consumers reference it via the workspace protocol — exactly how the upstream
+monorepo wires it (`packages/app` uses `"@ctd/sdk": "workspace:*"`):
 
-- `dashboard/package.json` → `"@ctd/sdk": "file:../vendor/ctd-sdk"`
-- `prover/package.json` → `"@ctd/sdk": "file:../vendor/ctd-sdk"`
+- `dashboard/package.json` → `"@ctd/sdk": "workspace:*"`
+- `prover/package.json` → `"@ctd/sdk": "workspace:*"`
+
+`bun install` (run at the repo root, or from any member) hoists every
+dependency into the root `node_modules`, so the vendored SDK's own deps
+(`@aztec/bb.js`, `@stellar/stellar-sdk`, `@noble/*`, `@noir-lang/noir_js`,
+`@zkpassport/poseidon2`) resolve from the workspace root for both bun and node —
+no per-consumer resolver flags. `circuits/` is intentionally NOT a workspace
+member (it is circom tooling, not a JS package).
 
 ## Refreshing
 
@@ -42,5 +51,6 @@ npm run build            # regenerate dist/
 # back in this repo
 cp -R <upstream>/packages/sdk/dist    vendor/ctd-sdk/
 cp -R <upstream>/packages/sdk/circuits vendor/ctd-sdk/
-# then update the "Vendored at commit" line above, and re-run the consumer installs
+# then update the "Vendored at commit" line above, and re-run `bun install` at the
+# repo root so the workspace picks up any dependency changes.
 ```

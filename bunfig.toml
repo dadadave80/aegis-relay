@@ -1,0 +1,9 @@
+# Bun workspace install config.
+#
+# Use the hoisted (flat) node_modules linker rather than bun's default isolated
+# (.bun store) layout. The Next.js dashboard's webpack build + the bb.js vendoring
+# script expect a flat node_modules, and a flat root lets the vendored @ctd/sdk's
+# realpath resolution (from vendor/ctd-sdk/dist) find its deps at the workspace
+# root — so no per-consumer resolver hacks are needed.
+[install]
+linker = "hoisted"
