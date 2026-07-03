@@ -251,11 +251,12 @@ matches; `grep -n "VALID_ROLES" dashboard/lib/session-context.tsx` → present.
 
 `dashboard/app/page.tsx` (lines 51-87):
 - Change `<Link href="/demo" …>` (line 54) → `href="/console"`.
-- Eyebrow (line 69): "Interactive demo console" → "The app" (or "Console").
+- Eyebrow (line 69): "Interactive demo console" → "The app".
 - Copy (lines 74-77): drop "Log in," and "and attacker"; e.g. "Connect your
   wallet, act as merchant, carrier, recipient or auditor, and watch every proof
   settle live on testnet."
-- Button (line 83): "Launch demo console →" → "Open the app →" (or "Open console →").
+- Button (line 83): "Launch demo console →" → **"Open the app →"** (the Link
+  targets `/console`).
 - The section comment (line 51) "the interactive demo console" → "the app".
 
 **Verify**: `grep -in "demo" dashboard/app/page.tsx` → no matches.
@@ -296,7 +297,7 @@ also mention attacker — grep and fix if present.)
 ### Step 8b: Fix the nav CTA + stale comment (required for the rename)
 
 - `dashboard/components/Nav.tsx:9` — `const cta = { href: "/demo", label: "Demo console" }`
-  → `href: "/console", label: "Console"`.
+  → `href: "/console", label: "Open the app"`.
 - `dashboard/app/providers.tsx` — reword the comment that references
   `app/demo/page.tsx` to `app/console/page.tsx`.
 

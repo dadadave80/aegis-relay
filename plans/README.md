@@ -14,7 +14,7 @@ run the drift check first, and update your row when done.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
 | 001 | Enforce one role per wallet on-chain (registry role binding) | P1 | M | — | DONE (branch `advisor/001-onchain-role-binding`, commit `5d2f840`; unmerged — awaiting redeploy) |
-| 002 | Make it the real app — remove "demo" framing + the attacker role | P1 | M | — | TODO |
+| 002 | Make it the real app — remove "demo" framing + the attacker role | P1 | M | — | DONE (branch `advisor/002-real-app-remove-demo-and-attacker`, commit `c5f0df4`; unmerged) |
 | 003 | First-connect role modal + on-chain-gated role switching | P2 | M | 001 (deployed), 002 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale)
