@@ -1,46 +1,81 @@
 "use client";
 
 /**
- * Persistent lifecycle board: the current shipment's state, timeline, the
- * seen-vs-hidden money-shot panel, and (for drones) the corridor map. Stays on
- * screen across role switches so the founder can narrate the whole story.
+ * Persistent lifecycle board (Two-Worlds design): the current shipment as a
+ * StatusRail instrument + the VisibilityMatrix disclosure ledger, plus the drone
+ * corridor. Stays on screen across the lifecycle so the whole story is legible.
  */
 
 import { useState } from "react";
 import { useSession } from "@/lib/session-context";
-import { FALLBACK_CONTRACTS } from "./config";
-import { Spinner, TextInput } from "./primitives";
-import DemoTimeline from "./DemoTimeline";
-import SeenVsHidden from "./SeenVsHidden";
+import { FALLBACK_CONTRACTS, txLink } from "./config";
+import { StatusRail, type RailStation } from "@/components/ds/StatusRail";
+import { VisibilityMatrix } from "@/components/ds/VisibilityMatrix";
+import { Stamp } from "@/components/ds/Stamp";
+import { Spinner } from "@/components/ds/Button";
+import { TextInput } from "./primitives";
 import CorridorMini from "./CorridorMini";
-import type { ShipmentState } from "@/lib/types";
+import type { ShipmentState, ShipmentView } from "@/lib/types";
 
-const STATE_STYLE: Record<
-  ShipmentState,
-  { label: string; color: string; glyph: string }
-> = {
-  OPEN: { label: "OPEN", color: "var(--amber)", glyph: "○" },
-  IN_TRANSIT: { label: "IN TRANSIT", color: "var(--text)", glyph: "▸" },
-  DELIVERED: { label: "DELIVERED", color: "var(--mint)", glyph: "✓" },
-  EXPIRED: { label: "EXPIRED", color: "var(--red)", glyph: "▲" },
-  UNKNOWN: { label: "UNKNOWN", color: "var(--text-faint)", glyph: "?" },
+const STATE_STAMP: Record<ShipmentState, { label: string; tone: "caution" | "ink" | "verified" | "danger" | "dim" }> = {
+  OPEN: { label: "OPEN", tone: "caution" },
+  IN_TRANSIT: { label: "IN TRANSIT", tone: "ink" },
+  DELIVERED: { label: "DELIVERED", tone: "verified" },
+  EXPIRED: { label: "EXPIRED", tone: "danger" },
+  UNKNOWN: { label: "UNKNOWN", tone: "dim" },
 };
 
-function StatePill({ state }: { state: ShipmentState }) {
-  const s = STATE_STYLE[state];
-  return (
-    <span
-      className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold"
-      style={{
-        color: s.color,
-        background: `color-mix(in srgb, ${s.color} 12%, transparent)`,
-        border: `1px solid color-mix(in srgb, ${s.color} 40%, transparent)`,
-      }}
-    >
-      <span aria-hidden>{s.glyph}</span>
-      {s.label}
-    </span>
-  );
+/** Map a ShipmentView to the StatusRail's instrument stations (mirrors the
+ *  on-chain lifecycle: OPEN → IN TRANSIT → [FLIGHT VERIFIED] → DELIVERED/EXPIRED). */
+function railStations(s: ShipmentView, contracts: typeof FALLBACK_CONTRACTS): RailStation[] {
+  const accepted = s.head !== null || s.state === "IN_TRANSIT" || s.state === "DELIVERED";
+  const delivered = s.state === "DELIVERED";
+  const expired = s.state === "EXPIRED";
+  const isDrone = s.method === "drone";
+  const tx = (h?: string): { tx?: string; txHref?: string } =>
+    h ? { tx: h, txHref: txLink(contracts, h) } : {};
+
+  const stations: RailStation[] = [
+    { label: "OPEN", status: "done", detail: "Created — opaque commitment stored, escrow funded", ...tx(s.createdTx) },
+    {
+      label: "IN TRANSIT",
+      status: accepted ? "done" : expired ? "failed" : "active",
+      detail: accepted
+        ? "Carrier accepted — custody head computed on-chain"
+        : expired
+          ? "Never accepted before the deadline"
+          : "Awaiting carrier acceptance",
+      ...tx(s.acceptTx),
+    },
+  ];
+
+  if (isDrone) {
+    stations.push({
+      label: "FLIGHT VERIFIED",
+      status: s.flightOk ? "done" : expired ? "failed" : accepted ? "active" : "pending",
+      detail: s.flightOk
+        ? "Groth16 corridor-compliance proof accepted — route never revealed"
+        : accepted && !expired
+          ? "Awaiting the A2 flight proof (gates delivery for drones)"
+          : "Flight proof not reached",
+      flag: { ok: s.flightOk },
+      ...tx(s.flightTx),
+    });
+  }
+
+  if (expired) {
+    stations.push({ label: "EXPIRED", status: "failed", detail: "Escrow deadline passed — remaining escrow refunded to merchant" });
+  } else {
+    stations.push({
+      label: "DELIVERED",
+      status: delivered ? "done" : accepted && (!isDrone || s.flightOk) ? "active" : "pending",
+      detail: delivered
+        ? "Recipient proved receipt in zero-knowledge — escrow released in the same tx"
+        : "Awaiting the A1 proof-of-delivery",
+      ...tx(s.settleTx ?? s.deliverTx),
+    });
+  }
+  return stations;
 }
 
 function FocusInput() {
@@ -67,8 +102,7 @@ function FocusInput() {
       </div>
       <button
         onClick={go}
-        className="rounded-lg min-h-[40px] px-3 text-sm border hairline transition-[transform,opacity] active:scale-[0.96] hover:text-white"
-        style={{ color: "var(--text-dim)" }}
+        style={{ minHeight: 40, padding: "0 14px", borderRadius: "var(--r-control)", border: "1px solid var(--hairline)", background: "var(--void-1)", color: "var(--ink-dim)", fontSize: "var(--text-sm)", cursor: "pointer" }}
       >
         Focus
       </button>
@@ -77,25 +111,16 @@ function FocusInput() {
 }
 
 export default function LifecycleBoard() {
-  const { shipment, currentShipmentId, shipmentLoading, flyResult } =
-    useSession();
+  const { shipment, currentShipmentId, shipmentLoading, flyResult, lens } = useSession();
   const contracts = FALLBACK_CONTRACTS;
 
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Lifecycle board
-          </h2>
+          <h2 className="display" style={{ fontSize: "var(--text-lg)", fontWeight: 600 }}>Lifecycle board</h2>
           {currentShipmentId !== null && (
-            <span
-              className="mono text-sm px-2 py-0.5 rounded-md"
-              style={{
-                color: "var(--mint)",
-                background: "color-mix(in srgb, var(--mint) 10%, transparent)",
-              }}
-            >
+            <span className="mono" style={{ fontSize: "var(--text-sm)", color: "var(--chain)", padding: "1px 8px", borderRadius: "var(--r-control)", border: "1px solid var(--hairline)" }}>
               #{currentShipmentId}
             </span>
           )}
@@ -106,56 +131,32 @@ export default function LifecycleBoard() {
 
       {shipment && currentShipmentId !== null ? (
         <>
-          <div className="card p-5">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <StatePill state={shipment.state} />
-                <span
-                  className="mono text-xs px-2 py-0.5 rounded-full border uppercase"
-                  style={{
-                    color: "var(--mint)",
-                    borderColor: "color-mix(in srgb, var(--mint) 40%, transparent)",
-                    background: "color-mix(in srgb, var(--mint) 10%, transparent)",
-                  }}
-                >
-                  {shipment.method}
-                  {shipment.laneId !== null ? ` · lane ${shipment.laneId}` : ""}
-                </span>
-                <span
-                  className="mono text-xs px-2 py-0.5 rounded-full border"
-                  style={{
-                    color:
-                      shipment.rail === "confidential"
-                        ? "var(--amber)"
-                        : "var(--text-dim)",
-                    borderColor: "var(--border)",
-                  }}
-                >
-                  {shipment.rail} rail
-                </span>
-              </div>
+          <div className={lens ? "panel-cold" : "panel-warm"} style={{ padding: 18, transition: "background var(--dur-lens) ease-out" }}>
+            <div className="flex flex-wrap items-center gap-3" style={{ marginBottom: 18 }}>
+              <Stamp tone={STATE_STAMP[shipment.state].tone} style={{ fontSize: "var(--text-sm)" }}>
+                {STATE_STAMP[shipment.state].label}
+              </Stamp>
+              <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--ink-dim)", padding: "1px 8px", borderRadius: "var(--r-pill)", border: "1px solid var(--hairline)" }}>
+                {shipment.method}{shipment.laneId !== null ? ` · lane ${shipment.laneId}` : ""}
+              </span>
+              <span className="mono" style={{ fontSize: "var(--text-xs)", color: shipment.rail === "confidential" ? "var(--seal)" : "var(--ink-dim)", padding: "1px 8px", borderRadius: "var(--r-pill)", border: `1px solid ${shipment.rail === "confidential" ? "rgba(139,124,255,0.45)" : "var(--hairline)"}` }}>
+                {shipment.rail} rail
+              </span>
             </div>
-
-            <div className="mt-5">
-              <DemoTimeline shipment={shipment} />
-            </div>
+            <StatusRail stations={railStations(shipment, contracts)} />
           </div>
 
-          <SeenVsHidden shipment={shipment} contracts={contracts} />
+          <VisibilityMatrix confidential={shipment.rail === "confidential"} drone={shipment.method === "drone"} hideYou={lens} />
 
           {shipment.method === "drone" && <CorridorMini fly={flyResult} />}
         </>
       ) : (
-        <div className="card p-10 text-center">
-          <p className="text-base font-semibold">No shipment in focus</p>
-          <p
-            className="text-sm mt-2 max-w-md mx-auto leading-relaxed"
-            style={{ color: "var(--text-dim)" }}
-          >
-            Switch to <span style={{ color: "var(--mint)" }}>Merchant</span> and
-            create a shipment to start the story — or focus an existing id above.
-            Everything the chain records will appear here as an opaque commitment,
-            which is the whole point.
+        <div className="panel" style={{ padding: 40, textAlign: "center" }}>
+          <p style={{ fontSize: "var(--text-md)", fontWeight: 600, color: "var(--ink)" }}>No shipment in focus</p>
+          <p style={{ fontSize: "var(--text-sm)", margin: "8px auto 0", maxWidth: "44ch", color: "var(--ink-dim)", lineHeight: "var(--lh-body)" }}>
+            Create a shipment as <span style={{ color: "var(--seal)" }}>Merchant</span> to start the story — or
+            focus an existing id above. Everything the chain records appears here as an opaque commitment, which
+            is the whole point.
           </p>
         </div>
       )}
